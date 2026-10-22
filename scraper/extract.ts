@@ -1,5 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
-
 /** A candidate listing card pulled from the page DOM: the link, the card text and a thumbnail. */
 export type Block = { href: string; text: string; img: string | null };
 
@@ -16,93 +14,115 @@ export type Extracted = {
   imageUrl: string | null;
 };
 
-const MODEL = process.env.EXTRACT_MODEL || "claude-haiku-5-5";
+/**
+ * Free OpenRouter models, tried in order until one returns usable JSON.
+ * Override with EXTRACT_MODELS="a,b,c" (comma separated OpenRouter model ids).
+ */
+const MODELS = (
+  process.env.EXTRACT_MODELS ||
+  "google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free,openrouter/free"
+)
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+const CHUNK = 20; // cards per request: small inputs keep small free models accurate
 
 const SYSTEM = `You extract used-excavator listings from the text of cards on a German machinery marketplace search page.
+Reply with ONLY a JSON object, no markdown and no commentary, in exactly this shape:
+{"listings":[{"url":string,"title":string,"description":string|null,"make":string|null,"model":string|null,"priceEur":integer|null,"year":integer|null,"hours":integer|null,"location":string|null}]}
 Rules:
 - Only use information present in the cards. Never invent values; use null when unknown.
 - "url" must be copied exactly from the card's url.
-- priceEur is an integer in EUR (null for "VB", "auf Anfrage" or if absent).
+- priceEur is an integer in EUR, without dots or currency (null for "VB", "auf Anfrage" or if absent).
 - year is the construction year (Baujahr / EZ), hours is operating hours (Betriebsstunden / Std.).
 - location is the town, ideally "PLZ Town" (e.g. "12681 Berlin"); null if absent.
 - make/model e.g. make "Doosan", model "DX55-9" ("Dosan" is a misspelling of Doosan).
-- Skip anything that is not a complete excavator for sale (spare parts, buckets, attachments, engines, ads, navigation links).`;
+- description: one short sentence summarising the card.
+- Skip anything that is not a complete excavator for sale (spare parts, buckets, attachments, engines, ads, navigation links).
+- If there are no excavator listings, reply {"listings":[]}.`;
 
-const TOOL = {
-  name: "record_listings",
-  description: "Record the excavator listings found on the page.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      listings: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            url: { type: "string" },
-            title: { type: "string" },
-            description: { type: ["string", "null"], description: "1-2 sentence summary of the card" },
-            make: { type: ["string", "null"] },
-            model: { type: ["string", "null"] },
-            priceEur: { type: ["integer", "null"] },
-            year: { type: ["integer", "null"] },
-            hours: { type: ["integer", "null"] },
-            location: { type: ["string", "null"] },
-          },
-          required: ["url", "title"],
-        },
-      },
+export const hasAi = () => !!process.env.OPENROUTER_API_KEY;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Pull a JSON object/array out of a model reply that may contain fences or chatter. */
+function parseJson(text: string): unknown {
+  const t = text.replace(/```(?:json)?/gi, "");
+  const start = Math.min(...["{", "["].map((c) => (t.indexOf(c) === -1 ? Infinity : t.indexOf(c))));
+  const end = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
+  if (!isFinite(start) || end <= start) throw new Error("no JSON in reply");
+  return JSON.parse(t.slice(start, end + 1));
+}
+
+async function chat(model: string, user: string, withJsonMode: boolean): Promise<string> {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://github.com/noamanilyas/bagger-finder",
+      "X-Title": "Bagger Finder",
     },
-    required: ["listings"],
-  },
-};
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      max_tokens: 6000,
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: user },
+      ],
+      ...(withJsonMode ? { response_format: { type: "json_object" } } : {}),
+    }),
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (res.status === 400 && withJsonMode) return chat(model, user, false); // model/provider without JSON mode
+  if (!res.ok) throw new Error(`${model}: HTTP ${res.status} ${(await res.text()).slice(0, 120)}`);
+  const data = (await res.json()) as { choices?: { message?: { content?: string | null } }[]; error?: { message?: string } };
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error(`${model}: empty reply ${data.error?.message ?? ""}`);
+  return content;
+}
 
-export const hasAi = () => !!process.env.ANTHROPIC_API_KEY;
+async function viaAiChunk(blocks: Block[], sourceName: string): Promise<Extracted[]> {
+  const cards = blocks.map((b) => ({ url: b.href, text: b.text }));
+  const user = `Marketplace: ${sourceName}\nCards (JSON):\n${JSON.stringify(cards)}`;
 
-let client: Anthropic | null = null;
+  let lastErr: unknown;
+  for (const model of MODELS) {
+    try {
+      const parsed = parseJson(await chat(model, user, true));
+      const raw = (Array.isArray(parsed) ? parsed : (parsed as { listings?: unknown }).listings) as Partial<Extracted>[] | undefined;
+      if (!Array.isArray(raw)) throw new Error(`${model}: unexpected JSON shape`);
 
-async function viaAi(blocks: Block[], sourceName: string): Promise<Extracted[]> {
-  client ??= new Anthropic();
-  const cards = blocks.map((b, i) => ({ i, url: b.href, text: b.text }));
-  const params = {
-    model: MODEL,
-    max_tokens: 8000,
-    system: SYSTEM,
-    tools: [TOOL],
-    tool_choice: { type: "tool", name: TOOL.name },
-    messages: [
-      {
-        role: "user",
-        content: `Marketplace: ${sourceName}\nCards (JSON):\n${JSON.stringify(cards)}`,
-      },
-    ],
-  } as Anthropic.MessageCreateParamsNonStreaming;
-
-  const msg = await client.messages.create(params);
-  const block = msg.content.find((c) => c.type === "tool_use");
-  if (!block || block.type !== "tool_use") return [];
-
-  const raw = (block.input as { listings?: Partial<Extracted>[] }).listings ?? [];
-  const byUrl = new Map(blocks.map((b) => [b.href, b]));
-  const out: Extracted[] = [];
-  for (const r of raw) {
-    if (!r.url || !r.title) continue;
-    const src = byUrl.get(r.url);
-    if (!src) continue; // the model must not invent URLs
-    out.push({
-      url: r.url,
-      title: r.title,
-      description: r.description ?? null,
-      make: r.make ?? null,
-      model: r.model ?? null,
-      priceEur: typeof r.priceEur === "number" ? r.priceEur : null,
-      year: typeof r.year === "number" ? r.year : null,
-      hours: typeof r.hours === "number" ? r.hours : null,
-      location: r.location ?? null,
-      imageUrl: src.img,
-    });
+      const byUrl = new Map(blocks.map((b) => [b.href, b]));
+      const int = (v: unknown) => (typeof v === "number" && isFinite(v) ? Math.round(v) : null);
+      const out: Extracted[] = [];
+      for (const r of raw) {
+        if (!r || typeof r.url !== "string" || typeof r.title !== "string") continue;
+        const src = byUrl.get(r.url);
+        if (!src) continue; // the model must not invent URLs
+        out.push({
+          url: r.url,
+          title: r.title,
+          description: typeof r.description === "string" ? r.description : null,
+          make: typeof r.make === "string" ? r.make : null,
+          model: typeof r.model === "string" ? r.model : null,
+          priceEur: int(r.priceEur),
+          year: int(r.year),
+          hours: int(r.hours),
+          location: typeof r.location === "string" ? r.location : null,
+          imageUrl: src.img,
+        });
+      }
+      return out;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[extract] ${(err as Error).message} — trying next model`);
+      await sleep(2000); // be gentle with the free-tier rate limit (20 requests/min)
+    }
   }
-  return out;
+  throw lastErr ?? new Error("no model available");
 }
 
 /** Fallback without an API key: regexes over the card text. Rougher, but works offline. */
@@ -135,9 +155,13 @@ export async function extract(
   if (blocks.length === 0) return { items: [], via: hasAi() ? "ai" : "heuristic" };
   if (hasAi()) {
     try {
-      return { items: await viaAi(blocks, sourceName), via: "ai" };
+      const items: Extracted[] = [];
+      for (let i = 0; i < blocks.length; i += CHUNK) {
+        items.push(...(await viaAiChunk(blocks.slice(i, i + CHUNK), sourceName)));
+      }
+      return { items, via: "ai" };
     } catch (err) {
-      console.warn(`[extract] AI extraction failed (${(err as Error).message}); using heuristic parser`);
+      console.warn(`[extract] AI extraction failed (${(err as Error).message}); using heuristic parser for this page`);
     }
   }
   return { items: viaHeuristic(blocks), via: "heuristic" };

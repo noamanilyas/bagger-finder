@@ -3,7 +3,7 @@
  *
  *   1. Crawlee opens each search page in headless Chromium (handles retries, rate limits, JS-rendered sites)
  *   2. we collect the "cards" around listing links from the DOM
- *   3. Claude turns the cards into structured listings (or a regex fallback without an API key)
+ *   3. a free OpenRouter model turns the cards into structured listings (or a regex fallback without an API key)
  *   4. listings are filtered to the wanted models, geocoded and merged into data/listings.json
  */
 import { PlaywrightCrawler } from "crawlee";
@@ -14,7 +14,7 @@ import type { Listing, SourceResult, Status } from "../lib/types";
 import { extract, hasAi, type Block, type Extracted } from "./extract";
 import { geocode } from "./geocode";
 
-const MAX_CARDS_PER_PAGE = 80;
+const MAX_CARDS_PER_PAGE = 60;
 const KEEP_DAYS = 14;
 
 const status: Status = {
@@ -184,7 +184,7 @@ async function merge() {
 }
 
 async function main() {
-  console.log(`[scrape] start — extractor: ${hasAi() ? "Claude" : "heuristic (no ANTHROPIC_API_KEY)"}, models: ${WANTED.map((w) => w.label).join(", ")}`);
+  console.log(`[scrape] start — extractor: ${hasAi() ? "OpenRouter free models" : "heuristic (no OPENROUTER_API_KEY)"}, models: ${WANTED.map((w) => w.label).join(", ")}`);
   save("Crawling…");
   try {
     await crawl();
