@@ -10,7 +10,7 @@
  */
 import { CheerioCrawler, PlaywrightCrawler, type CheerioRoot } from "crawlee";
 import crypto from "node:crypto";
-import { FOREIGN, SOURCES, WANTED, looksRelevant, matchModel } from "../lib/config";
+import { FOREIGN, SOURCES, WANTED, isWheeled, looksRelevant, matchModel } from "../lib/config";
 import { readDb, readGeoCache, readStatus, writeDb, writeStatus } from "../lib/store";
 import type { Listing, SourceResult, Status } from "../lib/types";
 import { extract, hasAi, type Block, type Extracted } from "./extract";
@@ -31,7 +31,7 @@ const status: Status = {
 };
 const save = (message?: string) => writeStatus({ ...status, message: message ?? status.message });
 
-const collected: { source: string; sourceName: string; item: Extracted }[] = [];
+const collected: { source: string; sourceName: string; item: Extracted; wheeledHint: boolean }[] = [];
 
 type Job = { url: string; source: string };
 
@@ -108,7 +108,8 @@ async function processBlocks(job: Job, blocks: Block[], info: (m: string) => voi
   status.extractor = via;
   stat.pages += 1;
   stat.found += items.length;
-  for (const item of items) collected.push({ source: job.source, sourceName: source.name, item });
+  const wheeledHint = /\/mobilbagger\//.test(job.url); // TruckScout24 wheeled-excavator category page
+  for (const item of items) collected.push({ source: job.source, sourceName: source.name, item, wheeledHint });
   info(`${source.name}: ${blocks.length} links, ${relevant.length} relevant, ${items.length} listings via ${via} (${job.url})`);
   save(`Crawled ${source.name} (${stat.pages} pages)…`);
   return relevant.length;
@@ -244,7 +245,7 @@ async function merge() {
   const byId = new Map(db.listings.map((l) => [l.id, l]));
   const cache = readGeoCache();
 
-  for (const { sourceName, item } of collected) {
+  for (const { sourceName, item, wheeledHint } of collected) {
     const text = [item.title, item.make, item.model, item.description].filter(Boolean).join(" ");
     const wanted = matchModel(`${item.title} ${item.make ?? ""} ${item.model ?? ""}`) ?? matchModel(text);
     if (!wanted) continue;
@@ -266,6 +267,7 @@ async function merge() {
       model: item.model,
       modelKey: wanted.key,
       modelLabel: wanted.label,
+      wheeled: isWheeled(`${item.title} ${item.make ?? ""} ${item.model ?? ""} ${item.description ?? ""}`, wheeledHint),
       priceEur: item.priceEur,
       year: item.year,
       hours: item.hours,

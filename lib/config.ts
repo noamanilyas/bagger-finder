@@ -34,6 +34,14 @@ export function matchModel(text: string): WantedModel | null {
   return null;
 }
 
+/** Wheeled excavator (Mobilbagger): by category page hint, by the word, or by a "W" model suffix (DX55W, R140W-9, Robex 55W). */
+export function isWheeled(text: string, hint = false): boolean {
+  return (
+    hint ||
+    /mobilbagger|radbagger|mobile excavator|wheel(?:ed)? excavator|(?:dx|robex|hx|r|b|sv)\s*-?\s*\d{2,3}\s*-?\s*w(?![a-z])/i.test(text)
+  );
+}
+
 /** Listings located outside Germany are skipped ("available in Germany"). */
 export const FOREIGN =
   /norwegen|tschechi|polen|niederlande|belgien|frankreich|italien|spanien|österreich|schweiz|dänemark|luxemburg|ungarn|rumänien|bulgarien|slowakei|slowenien|kroatien|litauen|lettland|estland|finnland|schweden|großbritannien|irland|portugal|griechenland|türkei|lithuania|poland|netherlands/i;
@@ -72,11 +80,14 @@ const MASCHINENSUCHER_QUERIES = [
   "hyundai r 55",
   "hyundai r 55 w",
   "hyundai robex 55",
+  "hyundai robex 55 w",
   "hyundai r 140",
   "hyundai r 140 lc",
   "hyundai r 140 w",
   "hyundai robex 140",
+  "hyundai robex 140 w",
   "hyundai hx 140",
+  "hyundai hx 140 w",
 ];
 
 /** Free-text searches on the classifieds / Machineryline: spelling variants people really use. */
@@ -96,6 +107,19 @@ const TEXT_QUERIES = [
   "hyundai r140",
   "hyundai robex 140",
   "hyundai hx 140",
+  // wheeled excavators (Mobilbagger / Radbagger)
+  "mobilbagger doosan dx 55",
+  "mobilbagger doosan dx 140",
+  "mobilbagger hyundai 55",
+  "mobilbagger hyundai 140",
+  "mobilbagger yanmar 55",
+  "doosan dx 55 w",
+  "doosan dx 140 w",
+  "hyundai r 55 w",
+  "hyundai r 140 w",
+  "hyundai robex 140 w",
+  "radbagger doosan",
+  "radbagger hyundai",
 ];
 
 const TS24 = "https://www.truckscout24.de/baumaschinen/gebraucht";
@@ -114,13 +138,15 @@ export const SOURCES: Source[] = [
     name: "TruckScout24",
     enabled: true,
     urls: () => [
+      // wheeled excavators first: that is the main focus
+      ...range(6).map((n) => `${TS24}/mobilbagger/doosan?page=${n}`),
+      ...range(4).map((n) => `${TS24}/mobilbagger/hyundai?page=${n}`),
+      ...range(3).map((n) => `${TS24}/mobilbagger/yanmar?page=${n}`),
       ...range(2).map((n) => `${TS24}/minibagger/yanmar?page=${n}`),
-      ...range(5).map((n) => `${TS24}/minibagger/doosan?page=${n}`),
-      ...range(5).map((n) => `${TS24}/kettenbagger/doosan?page=${n}`),
-      ...range(2).map((n) => `${TS24}/mobilbagger/doosan?page=${n}`),
+      ...range(4).map((n) => `${TS24}/minibagger/doosan?page=${n}`),
+      ...range(4).map((n) => `${TS24}/kettenbagger/doosan?page=${n}`),
       ...range(3).map((n) => `${TS24}/minibagger/hyundai?page=${n}`),
       ...range(3).map((n) => `${TS24}/kettenbagger/hyundai?page=${n}`),
-      ...range(2).map((n) => `${TS24}/mobilbagger/hyundai?page=${n}`),
     ],
   },
   {
@@ -142,7 +168,7 @@ export const SOURCES: Source[] = [
     name: "Machineryline",
     enabled: true,
     urls: () =>
-      ["Yanmar 55", "Doosan 55", "Doosan DX55", "Doosan 140", "Doosan DX140", "Hyundai 55", "Hyundai R55", "Hyundai 140", "Hyundai R140", "Robex 55", "Robex 140"].map(
+      ["Yanmar 55", "Doosan 55", "Doosan DX55", "Doosan DX55W", "Doosan 140", "Doosan DX140", "Doosan DX140W", "Hyundai 55", "Hyundai R55", "Hyundai R55W", "Hyundai 140", "Hyundai R140", "Hyundai R140W", "Robex 55", "Robex 140", "Mobilbagger Doosan", "Mobilbagger Hyundai"].map(
         (q) => `https://machineryline.de/search_text.php?query=${plus(q)}`,
       ),
   },

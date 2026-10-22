@@ -9,6 +9,8 @@ export type Listing = {
   /** key of the wanted model this listing matched (see lib/config.ts) */
   modelKey: string;
   modelLabel: string;
+  /** wheeled excavator (Mobilbagger / Radbagger) */
+  wheeled: boolean;
   priceEur: number | null;
   year: number | null;
   hours: number | null;

@@ -54,6 +54,7 @@ export default function Home() {
   const [maxPrice, setMaxPrice] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [wheeledOnly, setWheeledOnly] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -88,11 +89,12 @@ export default function Home() {
     const q = query.trim().toLowerCase();
     return (data?.listings ?? [])
       .filter((l) => models.size === 0 || models.has(l.modelKey))
+      .filter((l) => !wheeledOnly || l.wheeled)
       .filter((l) => source === "all" || l.source === source)
       .filter((l) => isNaN(max) || (l.priceEur != null && l.priceEur <= max))
       .filter((l) => !q || `${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
       .sort(sorter(sort));
-  }, [data, models, source, maxPrice, query, sort]);
+  }, [data, models, source, maxPrice, query, sort, wheeledOnly]);
 
   const select = useCallback((id: string) => {
     setSelected(id);
@@ -135,6 +137,9 @@ export default function Home() {
         <aside className="left">
           <div className="controls">
             <div className="chips">
+              <button className={`chip wheel${wheeledOnly ? " on" : ""}`} onClick={() => setWheeledOnly((v) => !v)}>
+                Mobilbagger only
+              </button>
               {(data?.models ?? []).map((m) => (
                 <button key={m.key} className={`chip${models.has(m.key) ? " on" : ""}`} onClick={() => toggleModel(m.key)}>
                   {m.label}
@@ -179,6 +184,7 @@ export default function Home() {
                   </a>
                   <div className="tags">
                     <span className="tag model">{l.modelLabel}</span>
+                    {l.wheeled && <span className="tag wheel">Mobilbagger</span>}
                     <span className="tag">{l.source}</span>
                     {l.lat == null && <span className="tag warn">no map location</span>}
                   </div>
