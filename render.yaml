@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: bagger-finder
+    runtime: docker
+    plan: free
+    region: frankfurt
+    autoDeploy: true
+    healthCheckPath: /api/listings
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false # set in the Render dashboard; without it a basic heuristic parser is used
+      - key: EXTRACT_MODEL
+        value: claude-haiku-5-5
+      - key: AUTO_SCRAPE
+        value: "true"
