@@ -7,6 +7,10 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
+# Crawlee shells out to `ps` to read memory usage; the slim image does not ship it.
+RUN apt-get update && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package*.json ./
 RUN npm install --no-audit --no-fund
 RUN npx playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
