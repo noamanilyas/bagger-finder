@@ -17,7 +17,7 @@ export const WANTED: WantedModel[] = [
   { key: "yanmar-55", label: "Yanmar 55", make: /yanmar/i, number: /(?<![\d/x,.])(?:vio|sv)?\s*-?\s*55(?!\d|[,.]\d)/i, needsBagger: true },
   { key: "doosan-dx55", label: "Doosan DX55", make: /do{1,2}san|develon|daewoo/i, number: /dx\s*-?\s*55(?!\d)/i },
   { key: "doosan-dx140", label: "Doosan DX140", make: /do{1,2}san|develon|daewoo/i, number: /dx\s*-?\s*140(?!\d)/i },
-  { key: "hyundai-140", label: "Hyundai 140", make: /hyundai/i, number: /(?:robex|hx|(?<![a-z])r)\s*-?\s*140(?!\d)/i, needsBagger: true },
+  { key: "hyundai-140", label: "Hyundai 140", make: /hyundai/i, number: /(?:robex|hx|hw|w|(?<![a-z])r)\s*-?\s*140(?!\d)|(?<!\d)140\s*-?\s*w(?![a-z])/i, needsBagger: true },
   { key: "hyundai-55", label: "Hyundai 55", make: /hyundai/i, number: /(?:robex|hx|(?<![a-z])r)\s*-?\s*55(?!\d)/i, needsBagger: true },
   // the machine types the owner pointed at: Minibagger DX60, Mobilbagger DX210
   { key: "doosan-dx60", label: "Doosan DX60", make: /do{1,2}san|develon|daewoo/i, number: /dx\s*-?\s*60(?!\d)/i },
@@ -26,12 +26,16 @@ export const WANTED: WantedModel[] = [
 
 /** Never an excavator for sale: tyres, rubber tracks, parts, rentals, wanted ads. */
 const HARD_EXCLUDE =
-  /reifen|räder\b|felge|gummiketten?|gummipads?|laufrolle|ersatzteil|zahnrad|kühler|hydraulikpumpe|anhänger|vermiet|zu miete|mietbagger|gesuch|suche\s|radlader|gabelstapler|stapler|generator|cnc|bearbeitungszentrum|drehmaschine|fräsmaschine|dreh- und fräs|landmaschine/i;
+  /reifen|räder\b|felge|gummiketten?|gummipads?|laufrolle|ersatzteil|zahnrad|kühler|hydraulikpumpe|anhänger|vermiet|mieten|miete\b|mietpreis|tagesmiete|mietmaschine|\/\s*tag\b|pro tag|zu miete|mietbagger|gesuch|suche\s|radlader|gabelstapler|stapler|generator|cnc|bearbeitungszentrum|drehmaschine|fräsmaschine|dreh- und fräs|landmaschine/i;
 /** Parts that name an engine/cab: only excluded when the text does not call the thing an excavator. */
 const SOFT_EXCLUDE = /motor\b|motoren|kabine|schlüssel|scheibe/i;
 
+/** Sizes the owner does not want (Hyundai/Doosan 150 and 170 class), even when the text also names a wanted one. */
+const UNWANTED_SIZE = /(?:robex|hx|hw|dx|w|(?<![a-z])r)\s*-?\s*(?:150|170)(?!\d)|(?<!\d)(?:150|170)\s*-?\s*w(?![a-z])/i;
+
 export function matchModel(text: string): WantedModel | null {
   if (HARD_EXCLUDE.test(text)) return null;
+  if (UNWANTED_SIZE.test(text)) return null;
   if (SOFT_EXCLUDE.test(text) && !/bagger|excavator/i.test(text)) return null;
   for (const m of WANTED) {
     if (m.make.test(text) && m.number.test(text) && (!m.needsBagger || /bagger|excavator/i.test(text))) return m;
