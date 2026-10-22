@@ -200,24 +200,44 @@ async function viaAiChunk(blocks: Block[], sourceName: string): Promise<Extracte
 
 // ---- fallback --------------------------------------------------------------------------------
 
-/** Fallback without an AI answer: regexes over the card text. Rougher, but works offline. */
+/** Fallback without an AI answer: rules tuned to the card layout of the marketplaces. */
+const BOILERPLATE =
+  /Erfolgreich: Ihre Nachricht wurde versandt\.|Kleinanzeige|Mehr Bilder anfragen|Bereits angefragt|Anfrage senden|Anfragen|Anrufen|Suche speichern|Ergebnisse|Preisinfo/g;
+
+function parseCard(raw: string): { title: string; location: string | null; text: string } {
+  const text = raw.replace(BOILERPLATE, " ").replace(/\b\d+ \/ \d+\b/g, " ").replace(/\s+/g, " ").trim();
+
+  // Maschinensucher / TruckScout24: "<place> <n> km <title><price> €"
+  let m = text.match(/^(.{2,40}?)\s\d{1,4}(?:\.\d{3})?\s?km\s+(.+?)(?=\d{1,3}(?:\.\d{3})+\s*€|\d{4,7}\s*€|Preis|$)/);
+  if (m) return { title: m[2].trim().slice(0, 140), location: m[1].trim(), text };
+
+  // Kleinanzeigen: "<n><PLZ> <City>(Gestern|Heute|dd.mm.yyyy)<title>…<price> €"
+  m = text.match(/(\d{5})\s*([A-ZÄÖÜ][^\d]*?)(?:Gestern|Heute|\d{2}\.\d{2}\.\d{4})[^A-Za-zÄÖÜäöü]*(.+)/);
+  if (m) {
+    const title = m[3].replace(/\d{1,3}(?:\.\d{3})*\s*€.*$/, "").trim();
+    return { title: title.slice(0, 140), location: `${m[1]} ${m[2].trim()}`, text };
+  }
+  return { title: text.slice(0, 140), location: null, text };
+}
+
+const toInt = (s: string | undefined) => (s ? parseInt(s.replace(/[.\s]/g, ""), 10) : null);
+
 function viaHeuristic(blocks: Block[]): Extracted[] {
   return blocks.map((b) => {
-    const t = b.text;
-    const price = t.match(/(\d{1,3}(?:[.\s]\d{3})+|\d{4,7})\s*(?:€|EUR)/i);
-    const year = t.match(/\b(19[89]\d|20[0-3]\d)\b/);
-    const hours = t.match(/(\d{1,3}(?:[.\s]\d{3})+|\d{2,6})\s*(?:h\b|std|betriebsstunden)/i);
-    const loc = t.match(/\b(\d{5})\s+([A-ZÄÖÜ][\wäöüß.-]+(?:\s[A-ZÄÖÜ][\wäöüß.-]+)?)/);
+    const { title, location, text } = parseCard(b.text);
+    const price = text.match(/(\d{1,3}(?:\.\d{3})+|\d{4,7})\s*(?:€|EUR)/i);
+    const year = text.match(/Baujahr:?\s*((?:19|20)\d{2})/i) ?? text.match(/\b((?:19[89]|20[0-3])\d)\b/);
+    const hours = text.match(/Betriebsstunden:?\s*(?:ca\.\s*)?(\d{1,3}(?:\.\d{3})+|\d{2,6})/i) ?? text.match(/(?<![\d.])(\d{1,3}(?:\.\d{3})+|\d{2,6})\s*(?:h|std)(?![a-zäöüß])/i);
     return {
       url: b.href,
-      title: t.slice(0, 90),
-      description: t.slice(0, 280),
+      title,
+      description: text.slice(0, 280),
       make: null,
       model: null,
-      priceEur: price ? parseInt(price[1].replace(/[.\s]/g, ""), 10) : null,
-      year: year ? parseInt(year[1], 10) : null,
-      hours: hours ? parseInt(hours[1].replace(/[.\s]/g, ""), 10) : null,
-      location: loc ? `${loc[1]} ${loc[2]}` : null,
+      priceEur: toInt(price?.[1]),
+      year: toInt(year?.[1]),
+      hours: toInt(hours?.[1]),
+      location,
       imageUrl: b.img,
     };
   });
@@ -239,7 +259,8 @@ export async function extract(
       continue;
     }
     try {
-      items.push(...(await viaAiChunk(chunk, sourceName)));
+      const got = await viaAiChunk(chunk, sourceName);
+      items.push(...(got.length > 0 ? got : viaHeuristic(chunk))); // an empty AI answer is not trusted
       aiChunks++;
       failedChunksInARow = 0;
     } catch (err) {

@@ -11,19 +11,32 @@ export type WantedModel = {
 };
 
 export const WANTED: WantedModel[] = [
-  { key: "yanmar-55", label: "Yanmar 55", make: /yanmar/i, number: /(?<!\d)55(?!\d)/ },
-  { key: "doosan-dx55", label: "Doosan DX55", make: /do{1,2}san|daewoo/i, number: /\bdx\s*-?\s*55(?!\d)/i },
-  { key: "doosan-dx140", label: "Doosan DX140", make: /do{1,2}san|daewoo/i, number: /\bdx\s*-?\s*140(?!\d)/i },
-  { key: "hyundai-140", label: "Hyundai 140", make: /hyundai/i, number: /(?<!\d)140(?!\d)/ },
-  { key: "hyundai-55", label: "Hyundai 55", make: /hyundai/i, number: /(?<!\d)55(?!\d)/ },
+  // "55" must stand alone: not part of 225/55 R18, 300x55,5x82 or 1.755
+  { key: "yanmar-55", label: "Yanmar 55", make: /yanmar/i, number: /(?<![\d/x,.])(?:vio|sv)?\s*-?\s*55(?!\d|[,.]\d)/i },
+  { key: "doosan-dx55", label: "Doosan DX55", make: /do{1,2}san|daewoo/i, number: /dx\s*-?\s*55(?!\d)/i },
+  { key: "doosan-dx140", label: "Doosan DX140", make: /do{1,2}san|daewoo/i, number: /dx\s*-?\s*140(?!\d)/i },
+  { key: "hyundai-140", label: "Hyundai 140", make: /hyundai/i, number: /(?:robex|hx|(?<![a-z])r)\s*-?\s*140(?!\d)/i },
+  { key: "hyundai-55", label: "Hyundai 55", make: /hyundai/i, number: /(?:robex|hx|(?<![a-z])r)\s*-?\s*55(?!\d)/i },
 ];
 
+/** Never an excavator for sale: tyres, rubber tracks, parts, rentals, wanted ads. */
+const HARD_EXCLUDE =
+  /reifen|räder\b|felge|gummiketten?|gummipads?|laufrolle|ersatzteil|zahnrad|kühler|hydraulikpumpe|anhänger|vermiet|zu miete|mietbagger|gesuch|suche\s/i;
+/** Parts that name an engine/cab: only excluded when the text does not call the thing an excavator. */
+const SOFT_EXCLUDE = /motor\b|motoren|kabine|schlüssel|scheibe/i;
+
 export function matchModel(text: string): WantedModel | null {
+  if (HARD_EXCLUDE.test(text)) return null;
+  if (SOFT_EXCLUDE.test(text) && !/bagger|excavator/i.test(text)) return null;
   for (const m of WANTED) {
     if (m.make.test(text) && m.number.test(text)) return m;
   }
   return null;
 }
+
+/** Listings located outside Germany are skipped ("available in Germany"). */
+export const FOREIGN =
+  /norwegen|tschechi|polen|niederlande|belgien|frankreich|italien|spanien|österreich|schweiz|dänemark|luxemburg|ungarn|rumänien|bulgarien|slowakei|slowenien|kroatien|litauen|lettland|estland|finnland|schweden|großbritannien|irland|portugal|griechenland|türkei|lithuania|poland|netherlands/i;
 
 /** Cheap pre-filter so we only send plausible blocks to the AI. */
 export function looksRelevant(text: string): boolean {

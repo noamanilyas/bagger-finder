@@ -10,7 +10,7 @@
  */
 import { CheerioCrawler, PlaywrightCrawler, type CheerioRoot } from "crawlee";
 import crypto from "node:crypto";
-import { SOURCES, WANTED, looksRelevant, matchModel } from "../lib/config";
+import { FOREIGN, SOURCES, WANTED, looksRelevant, matchModel } from "../lib/config";
 import { readDb, readGeoCache, readStatus, writeDb, writeStatus } from "../lib/store";
 import type { Listing, SourceResult, Status } from "../lib/types";
 import { extract, hasAi, type Block, type Extracted } from "./extract";
@@ -140,8 +140,11 @@ async function crawl() {
       async requestHandler({ $, request, log }) {
         const job: Job = { url: request.url, source: String(request.userData.source) };
         const blocks = collectBlocksCheerio($, request.loadedUrl ?? request.url);
-        const n = await processBlocks(job, blocks, (m) => log.info(m), false);
-        if (n === 0) needBrowser.push(job); // maybe rendered by JavaScript: retry in a real browser
+        // A normal results page has dozens of links; if it has almost none it was probably rendered by
+        // JavaScript (or blocked), so retry it in a real browser. Plenty of links but no match = no results.
+        const looksEmpty = blocks.length < 15;
+        const n = await processBlocks(job, blocks, (m) => log.info(m), !looksEmpty);
+        if (n === 0 && looksEmpty) needBrowser.push(job);
       },
       async failedRequestHandler({ request }, error) {
         const job: Job = { url: request.url, source: String(request.userData.source) };
@@ -245,6 +248,7 @@ async function merge() {
     const text = [item.title, item.make, item.model, item.description].filter(Boolean).join(" ");
     const wanted = matchModel(`${item.title} ${item.make ?? ""} ${item.model ?? ""}`) ?? matchModel(text);
     if (!wanted) continue;
+    if (item.location && FOREIGN.test(item.location)) continue;
 
     const url = normalizeUrl(item.url);
     const id = crypto.createHash("sha1").update(url).digest("hex").slice(0, 16);
