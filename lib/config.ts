@@ -53,40 +53,87 @@ export type Source = {
 
 const plus = (q: string) => q.trim().replace(/\s+/g, "+");
 const dash = (q: string) => q.trim().toLowerCase().replace(/\s+/g, "-");
+const range = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
 
-/** Search phrases used on sources that have a free-text search URL. */
-const QUERIES = [
+/**
+ * Maschinensucher searches by model name ("make model [suffix]"), so besides the plain model we also
+ * try the common suffixes (LC/LCR crawler, W wheeled, R) that have their own result pages.
+ */
+const MASCHINENSUCHER_QUERIES = [
   "yanmar vio 55",
   "yanmar sv 55",
   "doosan dx 55",
+  "doosan dx 55 w",
+  "doosan dx 55 r",
   "doosan dx 140",
+  "doosan dx 140 lc",
+  "doosan dx 140 lcr",
+  "doosan dx 140 w",
   "hyundai r 55",
+  "hyundai r 55 w",
+  "hyundai robex 55",
   "hyundai r 140",
+  "hyundai r 140 lc",
+  "hyundai r 140 w",
+  "hyundai robex 140",
   "hyundai hx 140",
 ];
+
+/** Free-text searches on the classifieds / Machineryline: spelling variants people really use. */
+const TEXT_QUERIES = [
+  "yanmar vio 55",
+  "yanmar sv 55",
+  "doosan dx 55",
+  "doosan dx55",
+  "doosan dx 55 w",
+  "doosan dx 140",
+  "doosan dx140",
+  "doosan dx 140 lc",
+  "hyundai r 55",
+  "hyundai r55",
+  "hyundai robex 55",
+  "hyundai r 140",
+  "hyundai r140",
+  "hyundai robex 140",
+  "hyundai hx 140",
+];
+
+const TS24 = "https://www.truckscout24.de/baumaschinen/gebraucht";
 
 export const SOURCES: Source[] = [
   {
     id: "maschinensucher",
     name: "Maschinensucher",
     enabled: true,
-    urls: () => QUERIES.map((q) => `https://www.maschinensucher.de/mss/${plus(q)}`),
+    urls: () => MASCHINENSUCHER_QUERIES.map((q) => `https://www.maschinensucher.de/mss/${plus(q)}`),
   },
   {
+    // Category pages per make (verified URL pattern) with ?page=N pagination.
+    // DX55 / R55 / ViO55 are mini excavators, DX140 / R140 are crawlers, and the "W" variants are wheeled.
     id: "truckscout24",
     name: "TruckScout24",
     enabled: true,
     urls: () => [
-      "https://www.truckscout24.de/baumaschinen/gebraucht/minibagger/yanmar",
-      "https://www.truckscout24.de/baumaschinen/gebraucht/alle/doosan/dx",
-      "https://www.truckscout24.de/baumaschinen/gebraucht/alle/hyundai",
+      ...range(2).map((n) => `${TS24}/minibagger/yanmar?page=${n}`),
+      ...range(5).map((n) => `${TS24}/minibagger/doosan?page=${n}`),
+      ...range(5).map((n) => `${TS24}/kettenbagger/doosan?page=${n}`),
+      ...range(2).map((n) => `${TS24}/mobilbagger/doosan?page=${n}`),
+      ...range(3).map((n) => `${TS24}/minibagger/hyundai?page=${n}`),
+      ...range(3).map((n) => `${TS24}/kettenbagger/hyundai?page=${n}`),
+      ...range(2).map((n) => `${TS24}/mobilbagger/hyundai?page=${n}`),
     ],
   },
   {
     id: "kleinanzeigen",
     name: "Kleinanzeigen",
     enabled: true,
-    urls: () => QUERIES.map((q) => `https://www.kleinanzeigen.de/s-${dash(q)}/k0`),
+    urls: () => [
+      ...TEXT_QUERIES.map((q) => `https://www.kleinanzeigen.de/s-${dash(q)}/k0`),
+      // second page for the broadest searches
+      ...["doosan dx 55", "doosan dx 140", "hyundai r 55", "hyundai r 140"].map(
+        (q) => `https://www.kleinanzeigen.de/s-seite:2/${dash(q)}/k0`,
+      ),
+    ],
   },
   {
     // Added at the owner's request. NOTE: the site's robots.txt asks bots not to read search_text.php,
@@ -95,7 +142,7 @@ export const SOURCES: Source[] = [
     name: "Machineryline",
     enabled: true,
     urls: () =>
-      ["Yanmar 55", "Doosan 55", "Doosan 140", "Hyundai 55", "Hyundai 140"].map(
+      ["Yanmar 55", "Doosan 55", "Doosan DX55", "Doosan 140", "Doosan DX140", "Hyundai 55", "Hyundai R55", "Hyundai 140", "Hyundai R140", "Robex 55", "Robex 140"].map(
         (q) => `https://machineryline.de/search_text.php?query=${plus(q)}`,
       ),
   },
@@ -104,6 +151,6 @@ export const SOURCES: Source[] = [
     id: "mascus",
     name: "Mascus",
     enabled: false,
-    urls: () => QUERIES.map((q) => `https://www.mascus.de/search?q=${plus(q)}`),
+    urls: () => TEXT_QUERIES.map((q) => `https://www.mascus.de/search?q=${plus(q)}`),
   },
 ];
