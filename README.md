@@ -7,8 +7,8 @@ marketplaces and shows them on a map: list with sorting and filters on the left,
 
 | Part | Tech |
 | --- | --- |
-| Crawling | [Crawlee](https://crawlee.dev) + Playwright (headless Chromium): retries, rate limiting, JavaScript-rendered pages |
-| Extraction | Free [OpenRouter](https://openrouter.ai) models (`EXTRACT_MODELS`, tried in order) turn listing cards into structured JSON; regex fallback without an API key |
+| Crawling | [Crawlee](https://crawlee.dev): plain HTTP + Cheerio first (cheap), headless Chromium via Playwright only for pages that come back empty or blocked; retries and rate limiting built in |
+| Extraction | Free [OpenRouter](https://openrouter.ai) models (`EXTRACT_MODELS` first, then currently available free models discovered live) turn listing cards into structured JSON; regex fallback without an API key |
 | Geocoding | OpenStreetMap Nominatim, cached on disk |
 | App | Next.js (App Router) + React + TypeScript, Leaflet map |
 
@@ -35,7 +35,6 @@ npm run scrape         # run the scraper once from the CLI
 `render.yaml` + `Dockerfile` (Chromium needs Docker). Set `OPENROUTER_API_KEY` in the Render dashboard.
 
 Notes:
-- Render's free plan has 512 MB RAM and an ephemeral disk: Chromium can run out of memory (use the Standard plan if
-  scrapes crash) and `data/` is wiped on each deploy (attach a disk and set `DATA_DIR` to keep history).
+- Render's free plan has 512 MB RAM and an ephemeral disk: Chromium is memory hungry (~800 MB seen), so it is only used as a fallback (use the Standard plan and `USE_BROWSER=true` if sites need it) and `data/` is wiped on each deploy (attach a disk and set `DATA_DIR` to keep history).
 - Free OpenRouter models are limited (about 20 requests/min and 200/day per model); a scrape uses a few dozen requests, so a scrape every 6 hours fits.
 - Check each marketplace's terms of use and robots.txt; the crawler is deliberately slow (1 page at a time, ≤20/min).

@@ -30,7 +30,12 @@ export function triggerScrape(reason: string): { started: boolean; reason?: stri
 
   const child = spawn(process.execPath, ["--import", "tsx", "scraper/run.ts"], {
     cwd: process.cwd(),
-    env: { ...process.env, CRAWLEE_STORAGE_DIR: path.join(os.tmpdir(), "crawlee") },
+    env: {
+      ...process.env,
+      CRAWLEE_STORAGE_DIR: path.join(os.tmpdir(), "crawlee"),
+      // Crawlee misdetects the container's memory limit as 128 MB and logs false "overloaded" warnings
+      CRAWLEE_MEMORY_MBYTES: process.env.CRAWLEE_MEMORY_MBYTES || "1024",
+    },
     stdio: "inherit",
   });
 

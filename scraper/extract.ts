@@ -15,18 +15,17 @@ export type Extracted = {
 };
 
 /**
- * Free OpenRouter models, tried in order until one returns usable JSON.
- * Override with EXTRACT_MODELS="a,b,c" (comma separated OpenRouter model ids).
+ * Models you want tried first (comma separated OpenRouter ids, e.g. "google/gemma-4-31b-it:free").
+ * After these, currently available free text models are discovered live from OpenRouter, because the
+ * free line-up changes often; "openrouter/free" (OpenRouter's own router) is the last resort.
  */
-const MODELS = (
-  process.env.EXTRACT_MODELS ||
-  "google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free,openrouter/free"
-)
+const PREFERRED = (process.env.EXTRACT_MODELS || "google/gemma-4-31b-it:free")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
 
-const CHUNK = 20; // cards per request: small inputs keep small free models accurate
+const CHUNK = 25; // cards per request: small inputs keep small free models accurate
+const MAX_MODELS = 8;
 
 const SYSTEM = `You extract used-excavator listings from the text of cards on a German machinery marketplace search page.
 Reply with ONLY a JSON object, no markdown and no commentary, in exactly this shape:
@@ -45,6 +44,49 @@ Rules:
 export const hasAi = () => !!process.env.OPENROUTER_API_KEY;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ---- model selection -------------------------------------------------------------------------
+
+type OrModel = {
+  id: string;
+  context_length?: number;
+  supported_parameters?: string[];
+  architecture?: { output_modalities?: string[] };
+};
+
+let discovered: string[] | null = null;
+const dead = new Set<string>(); // models that returned 404 / are gone for this run
+const cooling = new Map<string, number>(); // model -> timestamp until which we skip it (after a 429)
+
+async function discoverFreeModels(): Promise<string[]> {
+  if (discovered) return discovered;
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(20_000) });
+    const data = (await res.json()) as { data?: OrModel[] };
+    const bad = /safety|guard|vision|\bvl\b|omni|embed|rerank|decide|span-|code|coder|image|audio|tts/i;
+    const liked = /gemma|llama|qwen|mistral|deepseek|gpt-oss|glm|kimi|nemotron/i;
+    const score = (m: OrModel) =>
+      (m.supported_parameters?.includes("structured_outputs") ? 2 : 0) +
+      (m.supported_parameters?.includes("response_format") ? 1 : 0) +
+      (liked.test(m.id) ? 1 : 0);
+    discovered = (data.data ?? [])
+      .filter((m) => m.id.endsWith(":free") && !bad.test(m.id) && (m.context_length ?? 0) >= 32_000)
+      .filter((m) => (m.architecture?.output_modalities ?? ["text"]).every((o) => o === "text"))
+      .sort((a, b) => score(b) - score(a))
+      .map((m) => m.id);
+  } catch (err) {
+    console.warn(`[extract] could not list OpenRouter models: ${(err as Error).message}`);
+    discovered = [];
+  }
+  return discovered;
+}
+
+async function modelOrder(): Promise<string[]> {
+  const all = [...PREFERRED, ...(await discoverFreeModels()), "openrouter/free"];
+  return [...new Set(all)].filter((m) => !dead.has(m)).slice(0, MAX_MODELS);
+}
+
+// ---- OpenRouter call -------------------------------------------------------------------------
 
 /** Pull a JSON object/array out of a model reply that may contain fences or chatter. */
 function parseJson(text: string): unknown {
@@ -80,7 +122,7 @@ async function chat(model: string, user: string, withJsonMode: boolean): Promise
   if (!res.ok) throw new Error(`${model}: HTTP ${res.status} ${(await res.text()).slice(0, 120)}`);
   const data = (await res.json()) as { choices?: { message?: { content?: string | null } }[]; error?: { message?: string } };
   const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error(`${model}: empty reply ${data.error?.message ?? ""}`);
+  if (!content) throw new Error(`${model}: empty reply ${data.error?.message ?? ""}`.trim());
   return content;
 }
 
@@ -88,44 +130,60 @@ async function viaAiChunk(blocks: Block[], sourceName: string): Promise<Extracte
   const cards = blocks.map((b) => ({ url: b.href, text: b.text }));
   const user = `Marketplace: ${sourceName}\nCards (JSON):\n${JSON.stringify(cards)}`;
 
-  let lastErr: unknown;
-  for (const model of MODELS) {
-    try {
-      const parsed = parseJson(await chat(model, user, true));
-      const raw = (Array.isArray(parsed) ? parsed : (parsed as { listings?: unknown }).listings) as Partial<Extracted>[] | undefined;
-      if (!Array.isArray(raw)) throw new Error(`${model}: unexpected JSON shape`);
+  let lastErr: unknown = new Error("no model available");
+  for (let round = 0; round < 2; round++) {
+    const models = await modelOrder();
+    const ready = models.filter((m) => (cooling.get(m) ?? 0) <= Date.now());
+    if (ready.length === 0 && models.length > 0) {
+      // everything is rate limited: wait for the earliest one to recover
+      const wait = Math.min(...models.map((m) => (cooling.get(m) ?? 0) - Date.now()));
+      await sleep(Math.min(Math.max(wait, 1000), 30_000));
+      continue;
+    }
+    for (const model of ready) {
+      try {
+        const parsed = parseJson(await chat(model, user, true));
+        const raw = (Array.isArray(parsed) ? parsed : (parsed as { listings?: unknown }).listings) as Partial<Extracted>[] | undefined;
+        if (!Array.isArray(raw)) throw new Error(`${model}: unexpected JSON shape`);
 
-      const byUrl = new Map(blocks.map((b) => [b.href, b]));
-      const int = (v: unknown) => (typeof v === "number" && isFinite(v) ? Math.round(v) : null);
-      const out: Extracted[] = [];
-      for (const r of raw) {
-        if (!r || typeof r.url !== "string" || typeof r.title !== "string") continue;
-        const src = byUrl.get(r.url);
-        if (!src) continue; // the model must not invent URLs
-        out.push({
-          url: r.url,
-          title: r.title,
-          description: typeof r.description === "string" ? r.description : null,
-          make: typeof r.make === "string" ? r.make : null,
-          model: typeof r.model === "string" ? r.model : null,
-          priceEur: int(r.priceEur),
-          year: int(r.year),
-          hours: int(r.hours),
-          location: typeof r.location === "string" ? r.location : null,
-          imageUrl: src.img,
-        });
+        const byUrl = new Map(blocks.map((b) => [b.href, b]));
+        const int = (v: unknown) => (typeof v === "number" && isFinite(v) ? Math.round(v) : null);
+        const out: Extracted[] = [];
+        for (const r of raw) {
+          if (!r || typeof r.url !== "string" || typeof r.title !== "string") continue;
+          const src = byUrl.get(r.url);
+          if (!src) continue; // the model must not invent URLs
+          out.push({
+            url: r.url,
+            title: r.title,
+            description: typeof r.description === "string" ? r.description : null,
+            make: typeof r.make === "string" ? r.make : null,
+            model: typeof r.model === "string" ? r.model : null,
+            priceEur: int(r.priceEur),
+            year: int(r.year),
+            hours: int(r.hours),
+            location: typeof r.location === "string" ? r.location : null,
+            imageUrl: src.img,
+          });
+        }
+        console.log(`[extract] ${model}: ${out.length} listings from ${blocks.length} cards`);
+        return out;
+      } catch (err) {
+        lastErr = err;
+        const msg = (err as Error).message;
+        if (/HTTP (404|410)/.test(msg)) dead.add(model);
+        if (/HTTP 429/.test(msg)) cooling.set(model, Date.now() + 60_000);
+        console.warn(`[extract] ${msg.slice(0, 160)} — trying next model`);
+        await sleep(1500);
       }
-      return out;
-    } catch (err) {
-      lastErr = err;
-      console.warn(`[extract] ${(err as Error).message} — trying next model`);
-      await sleep(2000); // be gentle with the free-tier rate limit (20 requests/min)
     }
   }
-  throw lastErr ?? new Error("no model available");
+  throw lastErr;
 }
 
-/** Fallback without an API key: regexes over the card text. Rougher, but works offline. */
+// ---- fallback --------------------------------------------------------------------------------
+
+/** Fallback without an AI answer: regexes over the card text. Rougher, but works offline. */
 function viaHeuristic(blocks: Block[]): Extracted[] {
   return blocks.map((b) => {
     const t = b.text;
@@ -153,16 +211,19 @@ export async function extract(
   sourceName: string,
 ): Promise<{ items: Extracted[]; via: "ai" | "heuristic" }> {
   if (blocks.length === 0) return { items: [], via: hasAi() ? "ai" : "heuristic" };
-  if (hasAi()) {
+  if (!hasAi()) return { items: viaHeuristic(blocks), via: "heuristic" };
+
+  const items: Extracted[] = [];
+  let aiChunks = 0;
+  for (let i = 0; i < blocks.length; i += CHUNK) {
+    const chunk = blocks.slice(i, i + CHUNK);
     try {
-      const items: Extracted[] = [];
-      for (let i = 0; i < blocks.length; i += CHUNK) {
-        items.push(...(await viaAiChunk(blocks.slice(i, i + CHUNK), sourceName)));
-      }
-      return { items, via: "ai" };
+      items.push(...(await viaAiChunk(chunk, sourceName)));
+      aiChunks++;
     } catch (err) {
-      console.warn(`[extract] AI extraction failed (${(err as Error).message}); using heuristic parser for this page`);
+      console.warn(`[extract] AI failed for ${chunk.length} cards (${(err as Error).message.slice(0, 120)}); using heuristic parser for them`);
+      items.push(...viaHeuristic(chunk));
     }
   }
-  return { items: viaHeuristic(blocks), via: "heuristic" };
+  return { items, via: aiChunks > 0 ? "ai" : "heuristic" };
 }
