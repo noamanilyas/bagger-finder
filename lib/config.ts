@@ -89,6 +89,17 @@ export const SOURCES: Source[] = [
     urls: () => QUERIES.map((q) => `https://www.kleinanzeigen.de/s-${dash(q)}/k0`),
   },
   {
+    // Added at the owner's request. NOTE: the site's robots.txt asks bots not to read search_text.php,
+    // so it may block us (empty pages / errors show up in the per-source result in the app header).
+    id: "machineryline",
+    name: "Machineryline",
+    enabled: true,
+    urls: () =>
+      ["Yanmar 55", "Doosan 55", "Doosan 140", "Hyundai 55", "Hyundai 140"].map(
+        (q) => `https://machineryline.de/search_text.php?query=${plus(q)}`,
+      ),
+  },
+  {
     // Not verified yet — enable and check the per-source result in the app header.
     id: "mascus",
     name: "Mascus",
