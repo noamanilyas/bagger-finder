@@ -103,6 +103,7 @@ async function processBlocks(job: Job, blocks: Block[], info: (m: string) => voi
     info(`${source.name}: ${blocks.length} links, 0 relevant (${job.url})`);
     return 0;
   }
+  console.log(`[sample] ${source.name}: ${JSON.stringify(relevant.slice(0, 2).map((b) => b.text.slice(0, 320)))}`);
   const { items, via } = await extract(relevant, source.name);
   status.extractor = via;
   stat.pages += 1;

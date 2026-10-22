@@ -26,6 +26,14 @@ const PREFERRED = (process.env.EXTRACT_MODELS || "google/gemma-4-31b-it:free")
 
 const CHUNK = 25; // cards per request: small inputs keep small free models accurate
 const MAX_MODELS = 8;
+const CHUNK_DEADLINE_MS = 50_000; // give up on AI for a chunk after this long (free models are flaky)
+const MAX_TRIES_PER_CHUNK = 3;
+const MAX_FAILS_PER_MODEL = 2; // then the model is skipped for the rest of the run
+const MAX_FAILED_CHUNKS_IN_A_ROW = 2; // then AI is switched off for the rest of the run
+
+const failures = new Map<string, number>();
+let failedChunksInARow = 0;
+let aiDisabled = false;
 
 const SYSTEM = `You extract used-excavator listings from the text of cards on a German machinery marketplace search page.
 Reply with ONLY a JSON object, no markdown and no commentary, in exactly this shape:
@@ -70,7 +78,7 @@ async function discoverFreeModels(): Promise<string[]> {
       (m.supported_parameters?.includes("response_format") ? 1 : 0) +
       (liked.test(m.id) ? 1 : 0);
     discovered = (data.data ?? [])
-      .filter((m) => m.id.endsWith(":free") && !bad.test(m.id) && (m.context_length ?? 0) >= 32_000)
+      .filter((m) => m.id.endsWith(":free") && liked.test(m.id) && !bad.test(m.id) && (m.context_length ?? 0) >= 32_000)
       .filter((m) => (m.architecture?.output_modalities ?? ["text"]).every((o) => o === "text"))
       .sort((a, b) => score(b) - score(a))
       .map((m) => m.id);
@@ -116,7 +124,7 @@ async function chat(model: string, user: string, withJsonMode: boolean): Promise
       ],
       ...(withJsonMode ? { response_format: { type: "json_object" } } : {}),
     }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(25_000),
   });
   if (res.status === 400 && withJsonMode) return chat(model, user, false); // model/provider without JSON mode
   if (!res.ok) throw new Error(`${model}: HTTP ${res.status} ${(await res.text()).slice(0, 120)}`);
@@ -131,16 +139,22 @@ async function viaAiChunk(blocks: Block[], sourceName: string): Promise<Extracte
   const user = `Marketplace: ${sourceName}\nCards (JSON):\n${JSON.stringify(cards)}`;
 
   let lastErr: unknown = new Error("no model available");
-  for (let round = 0; round < 2; round++) {
+  const started = Date.now();
+  let tried = 0;
+  const outOfBudget = () => Date.now() - started > CHUNK_DEADLINE_MS || tried >= MAX_TRIES_PER_CHUNK;
+
+  for (let round = 0; round < 2 && !outOfBudget(); round++) {
     const models = await modelOrder();
     const ready = models.filter((m) => (cooling.get(m) ?? 0) <= Date.now());
     if (ready.length === 0 && models.length > 0) {
-      // everything is rate limited: wait for the earliest one to recover
+      // everything is rate limited: wait briefly for the earliest one to recover
       const wait = Math.min(...models.map((m) => (cooling.get(m) ?? 0) - Date.now()));
-      await sleep(Math.min(Math.max(wait, 1000), 30_000));
+      await sleep(Math.min(Math.max(wait, 1000), 10_000));
       continue;
     }
     for (const model of ready) {
+      if (outOfBudget()) break;
+      tried++;
       try {
         const parsed = parseJson(await chat(model, user, true));
         const raw = (Array.isArray(parsed) ? parsed : (parsed as { listings?: unknown }).listings) as Partial<Extracted>[] | undefined;
@@ -173,6 +187,9 @@ async function viaAiChunk(blocks: Block[], sourceName: string): Promise<Extracte
         const msg = (err as Error).message;
         if (/HTTP (404|410)/.test(msg)) dead.add(model);
         if (/HTTP 429/.test(msg)) cooling.set(model, Date.now() + 60_000);
+        const n = (failures.get(model) ?? 0) + 1;
+        failures.set(model, n);
+        if (n >= MAX_FAILS_PER_MODEL) dead.add(model);
         console.warn(`[extract] ${msg.slice(0, 160)} — trying next model`);
         await sleep(1500);
       }
@@ -211,18 +228,27 @@ export async function extract(
   sourceName: string,
 ): Promise<{ items: Extracted[]; via: "ai" | "heuristic" }> {
   if (blocks.length === 0) return { items: [], via: hasAi() ? "ai" : "heuristic" };
-  if (!hasAi()) return { items: viaHeuristic(blocks), via: "heuristic" };
+  if (!hasAi() || aiDisabled) return { items: viaHeuristic(blocks), via: "heuristic" };
 
   const items: Extracted[] = [];
   let aiChunks = 0;
   for (let i = 0; i < blocks.length; i += CHUNK) {
     const chunk = blocks.slice(i, i + CHUNK);
+    if (aiDisabled) {
+      items.push(...viaHeuristic(chunk));
+      continue;
+    }
     try {
       items.push(...(await viaAiChunk(chunk, sourceName)));
       aiChunks++;
+      failedChunksInARow = 0;
     } catch (err) {
       console.warn(`[extract] AI failed for ${chunk.length} cards (${(err as Error).message.slice(0, 120)}); using heuristic parser for them`);
       items.push(...viaHeuristic(chunk));
+      if (++failedChunksInARow >= MAX_FAILED_CHUNKS_IN_A_ROW) {
+        aiDisabled = true;
+        console.warn("[extract] free models keep failing — AI switched off for the rest of this run");
+      }
     }
   }
   return { items, via: aiChunks > 0 ? "ai" : "heuristic" };
