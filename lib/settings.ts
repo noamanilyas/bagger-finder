@@ -1,11 +1,14 @@
+import { DEFAULT_INTERVAL_MINUTES } from "./schedule";
 import { getSupabase } from "./supabase";
 
 export type ScraperSettings = {
   /** read only Mobilbagger search pages and keep only wheeled machines */
   mobileOnly: boolean;
+  /** minutes between automatic scrapes: one of INTERVAL_CHOICES */
+  intervalMinutes: number;
 };
 
-export const DEFAULT_SETTINGS: ScraperSettings = { mobileOnly: true };
+export const DEFAULT_SETTINGS: ScraperSettings = { mobileOnly: true, intervalMinutes: DEFAULT_INTERVAL_MINUTES };
 
 /** Stored values over the defaults, so settings added later still have a value. Throws if the database fails. */
 export async function loadSettings(): Promise<ScraperSettings> {

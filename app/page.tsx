@@ -2,7 +2,12 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DEFAULT_LIMITS } from "@/lib/config";
+import AddComment, { isMarked, StarIcon } from "@/components/AddComment";
+import NextScrape from "@/components/NextScrape";
+import { DEFAULT_LIMITS, withinLimits } from "@/lib/config";
+import { costPanel, NEGOTIATION, negotiatedText, type PkrRate } from "@/lib/costs";
+import { isSaleAd } from "@/lib/market";
+import { INTERVAL_CHOICES, type Schedule } from "@/lib/schedule";
 import type { ScraperSettings } from "@/lib/settings";
 import type { Listing, Status } from "@/lib/types";
 
@@ -16,6 +21,7 @@ type Payload = {
   listings: Listing[];
   models: { key: string; label: string }[];
   status: Status;
+  schedule: Schedule | null;
 };
 
 const SORTS = {
@@ -36,7 +42,7 @@ const num = (a: number | null, b: number | null, dir: 1 | -1) =>
 
 /** Interesting first, then not reviewed yet, then cheap but doubtful, then everything else. */
 function dealRank(l: Listing): number {
-  if (!l.flagged || l.aiVerdict === "not_comparable") return 3;
+  if (!isDeal(l)) return 3;
   if (l.aiVerdict === "interesting") return 0;
   return l.aiVerdict === "suspicious" ? 2 : 1;
 }
@@ -70,8 +76,67 @@ const DEAL_LABEL = {
   unchecked: "Below market, not reviewed",
 };
 
-/** Well below similar machines, unless AI found the price is not comparable. */
-const isDeal = (l: Listing) => l.flagged && l.aiVerdict !== "not_comparable";
+/** Well below similar machines or marked interesting by the buyer, unless AI found the price is not comparable. */
+function isDeal(l: Listing): boolean {
+  return (l.flagged || !!l.knowledge?.some((k) => k.interesting)) && l.aiVerdict !== "not_comparable";
+}
+
+const dealLabel = (l: Listing) =>
+  !l.aiVerdict && !l.flagged ? "Marked interesting, not reviewed" : DEAL_LABEL[l.aiVerdict ?? "unchecked"];
+
+const dealWhy = (l: Listing) =>
+  [
+    l.flagged && `Asking ${l.belowPct}% below the median asking price of ${l.marketCount} similar machines in your range (${eur(l.marketMedian!)})`,
+    l.aiReason && `AI: ${l.aiReason}`,
+  ]
+    .filter((part): part is string => !!part)
+    .map((part) => part.replace(/\.$/, ""))
+    .join(". ");
+
+function PakistanCost({ listing, rate }: { listing: Listing; rate: PkrRate | null }) {
+  const p = costPanel(listing.priceEur, rate, isSaleAd(listing));
+  return (
+    // opening the details must not also select the card, which would move the map
+    <details className="cost" onClick={(e) => e.stopPropagation()}>
+      <summary>
+        <span className="cost-head">Pakistan cost</span>
+        <span className="cost-totals">
+          {p.pkr && <strong>{p.pkr}</strong>}
+          <strong>{p.eur}</strong>
+        </span>
+        {p.negotiated && <span className="cost-note">{p.negotiated}</span>}
+      </summary>
+      <div className="cost-note">{p.breakdown}</div>
+      <div className="cost-note">{p.rateNote}</div>
+    </details>
+  );
+}
+
+type IconProps = { size?: number };
+const svg = (size: number, children: React.ReactNode, sw = 2) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {children}
+  </svg>
+);
+const IconSearch = ({ size = 16 }: IconProps) => svg(size, <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></>);
+const IconSliders = ({ size = 16 }: IconProps) =>
+  svg(size, <><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></>);
+const IconX = ({ size = 16 }: IconProps) => svg(size, <path d="M6 6l12 12M18 6L6 18" />, 2.2);
+const IconRefresh = ({ size = 16 }: IconProps) => svg(size, <><path d="M21 12a9 9 0 1 1-2.6-6.4" /><path d="M21 3v6h-6" /></>);
+const IconGear = ({ size = 18 }: IconProps) =>
+  svg(size, <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>, 1.8);
+const IconBagger = ({ size = 22 }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="6" y="24" width="20" height="10" rx="2" /><path d="M12 24v-7h9l3 7" /><path d="M26 27l8-12 8 4-2 9" /><circle cx="11" cy="38" r="3" /><circle cx="21" cy="38" r="3" />
+  </svg>
+);
+
+const VIEWS = [
+  ["list", "List"],
+  ["split", "List + map"],
+  ["map", "Map"],
+] as const;
+type View = (typeof VIEWS)[number][0];
 
 export default function Home() {
   const [data, setData] = useState<Payload | null>(null);
@@ -88,6 +153,12 @@ export default function Home() {
   const [dealsOnly, setDealsOnly] = useState(false);
   const [settings, setSettings] = useState<ScraperSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pkrRate, setPkrRate] = useState<PkrRate | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [view, setView] = useState<View>("split");
+  /** the listing whose comment / mark-interesting dialog is open */
+  const [commentFor, setCommentFor] = useState<string | null>(null);
+  const closeComment = useCallback(() => setCommentFor(null), []);
 
   const load = useCallback(async () => {
     try {
@@ -112,18 +183,29 @@ export default function Home() {
       .catch(() => setError("Could not load scraper settings."));
   }, []);
 
-  const saveMobileOnly = async (mobileOnly: boolean) => {
+  useEffect(() => {
+    fetch("/api/rate", { cache: "no-store" })
+      .then(async (res) => {
+        if (res.ok) setPkrRate((await res.json()) as PkrRate);
+      })
+      .catch(() => {}); // the cost panels say when there is no rate
+  }, []);
+
+  const saveSetting = async (change: Partial<ScraperSettings>) => {
+    if (!settings) return;
     const before = settings;
-    setSettings({ mobileOnly }); // a checkbox must respond at once; undone below if saving fails
+    setSettings({ ...settings, ...change }); // a control must respond at once; undone below if saving fails
     const res = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mobileOnly }),
+      body: JSON.stringify(change),
     }).catch(() => null);
     if (!res?.ok) {
       setSettings(before);
       setError("Could not save scraper settings.");
+      return;
     }
+    if (change.intervalMinutes !== undefined) await load(); // the next scrape time follows the interval
   };
 
   const running = data?.status.running ?? false;
@@ -147,8 +229,7 @@ export default function Home() {
   const sources = useMemo(() => [...new Set((data?.listings ?? []).map((l) => l.source))].sort(), [data]);
 
   const visible = useMemo(() => {
-    const max = limitOf(maxPrice);
-    const yearMax = limitOf(maxYear);
+    const limits = { maxPrice: limitOf(maxPrice), maxYear: limitOf(maxYear) };
     const modelQ = squash(modelText);
     const q = query.trim().toLowerCase();
     return (data?.listings ?? [])
@@ -156,9 +237,7 @@ export default function Home() {
       .filter((l) => !wheeledOnly || l.wheeled)
       .filter((l) => !dealsOnly || isDeal(l))
       .filter((l) => source === "all" || l.source === source)
-      // an unknown price or year stays visible, same as in the scraper
-      .filter((l) => max == null || l.priceEur == null || l.priceEur <= max)
-      .filter((l) => yearMax == null || l.year == null || l.year <= yearMax)
+      .filter((l) => withinLimits(l, limits))
       .filter((l) => !modelQ || squash(`${l.title} ${l.make ?? ""} ${l.model ?? ""}`).includes(modelQ))
       .filter((l) => !q || `${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
       .sort(sorter(sort));
@@ -177,6 +256,29 @@ export default function Home() {
       return next;
     });
 
+  /** Filters that are on, shown as removable chips while the filter panel is closed. */
+  const activeFilters: { label: string; clear: () => void }[] = [
+    ...(wheeledOnly ? [{ label: "Mobilbagger", clear: () => setWheeledOnly(false) }] : []),
+    ...(dealsOnly ? [{ label: "Below market", clear: () => setDealsOnly(false) }] : []),
+    ...(data?.models ?? []).filter((m) => models.has(m.key)).map((m) => ({ label: m.label, clear: () => toggleModel(m.key) })),
+    ...(modelText.trim() ? [{ label: `Model: ${modelText.trim()}`, clear: () => setModelText("") }] : []),
+    ...(limitOf(maxPrice) != null ? [{ label: `Max ${eur(limitOf(maxPrice)!)}`, clear: () => setMaxPrice("") }] : []),
+    ...(limitOf(maxYear) != null ? [{ label: `Up to ${maxYear}`, clear: () => setMaxYear("") }] : []),
+    ...(source !== "all" ? [{ label: source, clear: () => setSource("all") }] : []),
+  ];
+
+  /** Back to the filters the page starts with (Max € and Max year also feed "Refresh now"). */
+  const resetFilters = () => {
+    setWheeledOnly(true);
+    setDealsOnly(false);
+    setModels(new Set());
+    setModelText("");
+    setMaxPrice(String(DEFAULT_LIMITS.maxPrice ?? ""));
+    setMaxYear(String(DEFAULT_LIMITS.maxYear ?? ""));
+    setSource("all");
+  };
+
+  const commentListing = commentFor ? (data?.listings.find((x) => x.id === commentFor) ?? null) : null;
   const failed = Object.entries(data?.status.sources ?? {}).filter(([, s]) => !s.ok);
   const pagesDone = data?.status.pagesDone ?? 0;
   const pagesTotal = data?.status.pagesTotal ?? 0;
@@ -186,38 +288,79 @@ export default function Home() {
   return (
     <div className="app">
       <header className="top">
-        <div>
+        <div className="brand">
+          <span className="logo" aria-hidden="true"><IconBagger /></span>
           <h1>Bagger Finder</h1>
-          <div className="sub">
-            {data ? `${visible.length} of ${data.listings.length} listings` : "Loading…"}
+          <span className="sub">
+            {data ? `${visible.length} of ${data.listings.length}` : "Loading…"}
             {data?.updatedAt && ` · updated ${new Date(data.updatedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`}
-          </div>
+          </span>
+        </div>
+        <div className="seg" role="group" aria-label="View">
+          {VIEWS.map(([k, label]) => (
+            <button key={k} className={view === k ? "on" : ""} aria-pressed={view === k} onClick={() => setView(k)}>
+              {label}
+            </button>
+          ))}
         </div>
         <div className="top-actions">
-        <button onClick={() => setSettingsOpen((v) => !v)} className="btn secondary" aria-expanded={settingsOpen}>
-          Scraper settings
-        </button>
-        <button onClick={() => void refresh()} disabled={running} className="btn" title="Scrapes using the Max € and Max year set in the filters">
+          {data?.schedule && !running && <NextScrape schedule={data.schedule} onDue={load} />}
+          <button
+            onClick={() => setSettingsOpen((v) => !v)}
+            className={`btn secondary icon${settingsOpen ? " on" : ""}`}
+            aria-expanded={settingsOpen}
+            aria-label="Scraper settings"
+            title="Scraper settings"
+          >
+            <IconGear />
+          </button>
+          <button onClick={() => void refresh()} disabled={running} className="btn" title="Scrapes using the Max € and Max year set in the filters">
+            <IconRefresh />
+            {running ? "Scraping…" : "Refresh now"}
+          </button>
 
-          {running ? "Scraping…" : "Refresh now"}
-        </button>
+          {settingsOpen && (
+            <div className="popover settings" role="dialog" aria-label="Scraper settings">
+              <div className="popover-head">
+                <strong>Scraper settings</strong>
+                <button className="btn ghost icon" aria-label="Close" onClick={() => setSettingsOpen(false)}>
+                  <IconX />
+                </button>
+              </div>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={settings?.mobileOnly ?? false}
+                  disabled={!settings}
+                  onChange={(e) => void saveSetting({ mobileOnly: e.target.checked })}
+                />
+                <span>
+                  <span className="check-title">Only scrape Mobilbagger</span>
+                  <span className="sub">Used from the next scrape, including the automatic ones. Machines already stored stay until they expire.</span>
+                </span>
+              </label>
+              <label className="field-label">
+                Scrape automatically every
+                <select
+                  value={settings?.intervalMinutes ?? ""}
+                  disabled={!settings}
+                  onChange={(e) => void saveSetting({ intervalMinutes: Number(e.target.value) })}
+                >
+                  {INTERVAL_CHOICES.map((c) => (
+                    <option key={c.minutes} value={c.minutes}>{c.label}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="sub">
+                {data && !data.schedule
+                  ? "Automatic scraping is switched off on this server (AUTO_SCRAPE=false)."
+                  : "The next scrape is due this long after the last one started, whether it was automatic or “Refresh now”. A restart does not reset it; a missed one runs at startup."}
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
-      {settingsOpen && (
-        <div className="notice settings">
-          <label>
-            <input
-              type="checkbox"
-              checked={settings?.mobileOnly ?? false}
-              disabled={!settings}
-              onChange={(e) => void saveMobileOnly(e.target.checked)}
-            />{" "}
-            Only scrape Mobilbagger
-          </label>
-          <div className="sub">Used from the next scrape, including the hourly ones. Machines already stored stay until they expire.</div>
-        </div>
-      )}
       {data && running && (
         <div className="notice" role="status">
           <div>{data.status.message}</div>
@@ -238,109 +381,183 @@ export default function Home() {
       )}
       {error && <div className="notice err">{error}</div>}
 
-      <div className="split">
-        <aside className="left">
-          <div className="controls">
-            <div className="chips">
-              <button className={`chip wheel${wheeledOnly ? " on" : ""}`} onClick={() => setWheeledOnly((v) => !v)}>
-                Mobilbagger only
-              </button>
-              <button className={`chip deal${dealsOnly ? " on" : ""}`} onClick={() => setDealsOnly((v) => !v)}>
-                Below market only
-              </button>
-              {(data?.models ?? []).map((m) => (
-                <button key={m.key} className={`chip${models.has(m.key) ? " on" : ""}`} onClick={() => toggleModel(m.key)}>
-                  {m.label}
+      <div className={`split view-${view}`}>
+        {view !== "map" && (
+          <aside className="left">
+            <div className="controls">
+              <div className="row">
+                <label className="search">
+                  <IconSearch />
+                  <input placeholder="Search text or town" aria-label="Search text or town" value={query} onChange={(e) => setQuery(e.target.value)} />
+                </label>
+                <button
+                  className={`btn secondary filters-btn${filtersOpen || activeFilters.length ? " on" : ""}`}
+                  aria-expanded={filtersOpen}
+                  onClick={() => setFiltersOpen((v) => !v)}
+                >
+                  <IconSliders />
+                  Filters
+                  {activeFilters.length > 0 && <span className="badge">{activeFilters.length}</span>}
                 </button>
-              ))}
-            </div>
-            <div className="row">
-              <input placeholder="Search text or town" value={query} onChange={(e) => setQuery(e.target.value)} />
-              <input
-                className="narrow"
-                inputMode="numeric"
-                placeholder="Max €"
-                value={maxPrice}
-                aria-label="Max price in euros"
-                onChange={(e) => setMaxPrice(e.target.value.replace(/\D/g, ""))}
-              />
-            </div>
-            <div className="row">
-              <input placeholder="Model, e.g. B55W" aria-label="Model" value={modelText} onChange={(e) => setModelText(e.target.value)} />
-              <input
-                className="narrow"
-                inputMode="numeric"
-                placeholder="Max year"
-                aria-label="Max year"
-                value={maxYear}
-                onChange={(e) => setMaxYear(e.target.value.replace(/\D/g, ""))}
-              />
-            </div>
-            <div className="row">
-              <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} aria-label="Sort">
-                {Object.entries(SORTS).map(([k, label]) => (
-                  <option key={k} value={k}>{label}</option>
-                ))}
-              </select>
-              <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source">
-                <option value="all">All sources</option>
-                {sources.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+              </div>
 
-          <ul className="list">
-            {visible.map((l) => (
-              <li key={l.id} id={`item-${l.id}`} className={`card${l.id === selected ? " sel" : ""}`} onClick={() => select(l.id)}>
-                {l.imageUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={l.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
-                )}
-                <div className="body">
-                  <a href={l.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="title">
-                    {l.title}
-                  </a>
-                  <div className="tags">
-                    <span className="tag model">{l.modelLabel}</span>
-                    {l.wheeled && <span className="tag wheel">Mobilbagger</span>}
-                    <span className="tag">{l.source}</span>
-                    {l.lat == null && <span className="tag warn">no map location</span>}
-                    {isDeal(l) && <span className={`tag deal ${l.aiVerdict ?? "unchecked"}`}>{DEAL_LABEL[l.aiVerdict ?? "unchecked"]}</span>}
+              {filtersOpen ? (
+                <div className="filter-panel">
+                  <div className="filter-grid">
+                    <label className="field-label">
+                      Model
+                      <input placeholder="e.g. B55W" value={modelText} onChange={(e) => setModelText(e.target.value)} />
+                    </label>
+                    <label className="field-label" title={`Your budget. Also shows machines asking more, if ${NEGOTIATION.maxPct}% off would bring them within it.`}>
+                      Max €
+                      <input inputMode="numeric" placeholder="Any" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value.replace(/\D/g, ""))} />
+                    </label>
+                    <label className="field-label">
+                      Max year
+                      <input inputMode="numeric" placeholder="Any" value={maxYear} onChange={(e) => setMaxYear(e.target.value.replace(/\D/g, ""))} />
+                    </label>
                   </div>
-                  <div className="facts">
-                    <strong>{l.priceEur != null ? eur(l.priceEur) : "Price on request"}</strong>
-                    {l.year && <span>{l.year}</span>}
-                    {l.hours != null && <span>{l.hours.toLocaleString("de-DE")} h</span>}
-                    {l.location && <span>{l.location}</span>}
+                  <label className="field-label">
+                    Source
+                    <select value={source} onChange={(e) => setSource(e.target.value)}>
+                      <option value="all">All sources</option>
+                      {sources.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div>
+                    <span className="group-label">Show</span>
+                    <div className="chips">
+                      <button className={`chip wheel${wheeledOnly ? " on" : ""}`} aria-pressed={wheeledOnly} onClick={() => setWheeledOnly((v) => !v)}>
+                        Mobilbagger only
+                      </button>
+                      <button className={`chip deal${dealsOnly ? " on" : ""}`} aria-pressed={dealsOnly} onClick={() => setDealsOnly((v) => !v)}>
+                        Below market only
+                      </button>
+                    </div>
                   </div>
-                  {isDeal(l) && (
-                    <p className="deal-why">
-                      {l.belowPct}% below the median of {l.marketCount} similar machines in your range ({eur(l.marketMedian!)})
-                      {l.aiReason ? `. AI: ${l.aiReason}` : ""}
-                    </p>
-                  )}
-                  {l.description && <p>{l.description}</p>}
+                  <div>
+                    <span className="group-label">Models</span>
+                    <div className="chips">
+                      {(data?.models ?? []).map((m) => (
+                        <button key={m.key} className={`chip${models.has(m.key) ? " on" : ""}`} aria-pressed={models.has(m.key)} onClick={() => toggleModel(m.key)}>
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="filter-foot">
+                    <button className="btn ghost" onClick={resetFilters}>Reset</button>
+                    <button className="btn" onClick={() => setFiltersOpen(false)}>Show {visible.length} machines</button>
+                  </div>
                 </div>
-              </li>
-            ))}
-            {data && visible.length === 0 && (
-              <li className="empty">
-                {data.listings.length === 0
-                  ? running
-                    ? "First scrape in progress — listings will appear here in a few minutes."
-                    : "No listings yet. Press “Refresh now” to run the first scrape."
-                  : "No listings match these filters."}
-              </li>
-            )}
-          </ul>
-        </aside>
+              ) : (
+                activeFilters.length > 0 && (
+                  <div className="active-chips">
+                    {activeFilters.map((f) => (
+                      <button key={f.label} className="chip active" onClick={f.clear} aria-label={`Remove filter ${f.label}`}>
+                        {f.label}
+                        <IconX size={12} />
+                      </button>
+                    ))}
+                  </div>
+                )
+              )}
+            </div>
 
-        <main className="right">
-          <Map listings={visible} selectedId={selected} onSelect={select} />
-        </main>
+            <div className="list-head">
+              <span><strong>{visible.length}</strong> machines</span>
+              <label>
+                Sort
+                <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+                  {Object.entries(SORTS).map(([k, label]) => (
+                    <option key={k} value={k}>{label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <ul className="list">
+              {visible.map((l) => (
+                <li key={l.id} id={`item-${l.id}`} className={`card${l.id === selected ? " sel" : ""}`} onClick={() => select(l.id)}>
+                  {l.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={l.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span className="thumb" aria-hidden="true"><IconBagger size={30} /></span>
+                  )}
+                  <div className="body">
+                    <div className="title-row">
+                      <a href={l.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="title" title={l.title}>
+                        {l.title}
+                      </a>
+                      <strong className="price" title={l.priceEur != null && isSaleAd(l) ? negotiatedText(l.priceEur) : undefined}>
+                        {l.priceEur != null ? eur(l.priceEur) : "On request"}
+                      </strong>
+                    </div>
+                    <div className="facts">
+                      {[l.year, l.hours != null ? `${l.hours.toLocaleString("de-DE")} h` : null, l.location].filter(Boolean).join(" · ")}
+                    </div>
+                    {isDeal(l) && dealWhy(l) && (
+                      <p className="deal-why" title={dealWhy(l)}>{dealWhy(l)}</p>
+                    )}
+                    <div className="tags">
+                      <span className="tag model">{l.modelLabel}</span>
+                      {!wheeledOnly && l.wheeled && <span className="tag wheel">Mobilbagger</span>}
+                      {isDeal(l) && <span className={`tag deal ${l.aiVerdict ?? "unchecked"}`}>{dealLabel(l)}</span>}
+                      {l.lat == null && <span className="tag warn">no map location</span>}
+                      <span className="tag source">{l.source}</span>
+                      {l.priceEur != null && (
+                        <span className="to-pk">
+                          To PK <strong>{costPanel(l.priceEur, pkrRate, isSaleAd(l)).pkr ?? costPanel(l.priceEur, pkrRate, isSaleAd(l)).eur}</strong>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    className={`star${isMarked(l) ? " on" : ""}`}
+                    aria-label={isMarked(l) ? "Edit interesting note" : "Mark interesting"}
+                    title={isMarked(l) ? "Edit interesting note" : "Mark interesting"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCommentFor(l.id);
+                    }}
+                  >
+                    <StarIcon filled={isMarked(l)} size={20} />
+                  </button>
+                </li>
+              ))}
+              {data && visible.length === 0 && (
+                <li className="empty">
+                  {data.listings.length === 0
+                    ? running
+                      ? "First scrape in progress — listings will appear here in a few minutes."
+                      : "No listings yet. Press “Refresh now” to run the first scrape."
+                    : "No listings match these filters."}
+                </li>
+              )}
+            </ul>
+          </aside>
+        )}
+
+        {view !== "list" && (
+          <main className="right">
+            <Map listings={visible} selectedId={selected} onSelect={select} pkrRate={pkrRate} onMark={setCommentFor} />
+          </main>
+        )}
       </div>
+
+      {commentListing && (
+        <AddComment
+          key={commentListing.id}
+          listing={commentListing}
+          all={data?.listings ?? []}
+          onChange={load}
+          onClose={closeComment}
+          summary={isDeal(commentListing) ? dealWhy(commentListing) : null}
+        />
+      )}
     </div>
   );
 }

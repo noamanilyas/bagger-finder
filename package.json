@@ -9,6 +9,10 @@
     "start": "next start -p ${PORT:-3000}",
     "scrape": "tsx scraper/run.ts",
     "market-report": "node --env-file=.env --import tsx scraper/market-report.ts",
+    "knowledge": "node --env-file=.env --import tsx scraper/knowledge.ts",
+    "try-source": "tsx scraper/try-source.ts",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "test:live": "tsx tests/live-parity.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

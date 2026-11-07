@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { SOURCES } from "../lib/config";
+import { notesFor, type KnowledgeNote } from "../lib/knowledge";
+import { loadKnowledge } from "../lib/supabase";
 import type { AiVerdict, Listing } from "../lib/types";
 import { askFreeModels, hasAi } from "./extract";
 
@@ -14,14 +18,30 @@ Reply with ONLY a JSON object: {"verdict":"interesting"|"suspicious"|"not_compar
 - "not_comparable": only when the price is clearly not a sale price for this machine: rental, deposit, monthly rate, parts or attachment, or clearly another model or size.
 "reason" is one short English sentence based only on the facts given: say why it is worth a look and name any caveat such as high hours. Never invent facts.`;
 
+/** Added only for ads with matching notes: the prompt for every other ad stays exactly as it is. */
+const KNOWLEDGE_RULES = `
+"buyerMarkedInteresting" and "buyerComments" are written by the buyer, not part of the ad.
+- "buyerMarkedInteresting": the buyer marked this machine or machines like it as interesting, which may be why it is being reviewed, so its price may not be below similar machines and the comparison may be empty. Treat this as a strong reason for "interesting" and mention it in "reason". The rules for "suspicious" and "not_comparable" still apply.
+- "buyerComments": the buyer's own experience. Use them as context and mention them in "reason" when they matter. A comment stating a serious problem with this machine or model counts for "suspicious" as if the ad stated it.`;
+
 /** Raise this when the prompt changes, so saved verdicts are reviewed again on the next scrape. */
 const PROMPT_VERSION = 2;
 
-/** A new check is only needed when the ad text, the price or the prompt changed. */
-const checkKey = (l: Listing) => `${PROMPT_VERSION}|${l.cardHash ?? ""}|${l.priceEur ?? ""}`;
+/** A new check is only needed when the ad text, the price, the prompt or the matching notes changed. */
+function checkKey(l: Listing, notes: KnowledgeNote[]): string {
+  const key = `${PROMPT_VERSION}|${l.cardHash ?? ""}|${l.priceEur ?? ""}`;
+  if (notes.length === 0) return key;
+  const text = notes.map((n) => `${n.interesting}:${n.note}`).join("\n");
+  return `${key}|${createHash("sha1").update(text).digest("hex").slice(0, 12)}`;
+}
 
-function prompt(l: Listing): string {
+/** Empty lists become undefined, which leaves the field out of the JSON. */
+const textsOf = (notes: KnowledgeNote[]) => (notes.length > 0 ? notes.map((n) => n.note) : undefined);
+
+function prompt(l: Listing, notes: KnowledgeNote[]): string {
   return JSON.stringify({
+    buyerMarkedInteresting: textsOf(notes.filter((n) => n.interesting)),
+    buyerComments: textsOf(notes.filter((n) => !n.interesting)),
     title: l.title,
     model: l.modelLabel,
     type: l.wheeled ? "wheeled" : "tracked or unknown",
@@ -35,16 +55,26 @@ function prompt(l: Listing): string {
   });
 }
 
-/** Asks AI about flagged machines that have no current verdict. Results are written onto the listings. */
+/** Asks AI about flagged machines, and machines the buyer marked interesting, that have no current verdict. Results are written onto the listings. */
 export async function checkFlagged(listings: Listing[]): Promise<{ flagged: number; checked: number; failed: number; waiting: number }> {
+  const knowledge = await loadKnowledge();
+  const notesOf = new Map(listings.map((l) => [l.id, notesFor(l, knowledge)]));
+  const noted = (l: Listing) => notesOf.get(l.id)!;
+  const marked = (l: Listing) => noted(l).filter((n) => n.interesting).length;
   const flagged = listings.filter((l) => l.flagged);
-  const due = flagged.filter((l) => l.aiCheckKey !== checkKey(l));
+  // Some sites ask not to have their text used with AI (Source.ai): their machines keep the numbers but get no verdict.
+  const noAi = new Set(SOURCES.filter((s) => s.ai === false).map((s) => s.name));
+  const due = listings
+    .filter((l) => (l.flagged || marked(l) > 0) && l.aiCheckKey !== checkKey(l, noted(l)) && !noAi.has(l.source))
+    // Machines the buyer marked go first, so the limit per run cannot leave them waiting.
+    .sort((a, b) => marked(b) - marked(a));
   let checked = 0;
   let failed = 0;
   if (hasAi()) {
     for (const l of due.slice(0, MAX_CHECKS_PER_RUN)) {
+      const notes = noted(l);
       try {
-        const { value, model } = await askFreeModels(SYSTEM, prompt(l), 1500, (parsed) => {
+        const { value, model } = await askFreeModels(notes.length > 0 ? SYSTEM + KNOWLEDGE_RULES : SYSTEM, prompt(l, notes), 1500, (parsed) => {
           const r = parsed as { verdict?: unknown; reason?: unknown };
           if (!VERDICTS.includes(r.verdict as AiVerdict) || typeof r.reason !== "string") throw new Error("unexpected JSON shape");
           return { verdict: r.verdict as AiVerdict, reason: r.reason.slice(0, 240) };
@@ -52,7 +82,7 @@ export async function checkFlagged(listings: Listing[]): Promise<{ flagged: numb
         l.aiVerdict = value.verdict;
         l.aiReason = value.reason;
         l.aiModel = model;
-        l.aiCheckKey = checkKey(l);
+        l.aiCheckKey = checkKey(l, notes);
         checked++;
         console.log(`[check] ${l.title.slice(0, 60)}: ${value.verdict} (${model})`);
       } catch (err) {

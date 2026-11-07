@@ -1,0 +1,138 @@
+"use client";
+
+import { useState } from "react";
+import { commentText, notesFor, suggestedMaxPrice } from "@/lib/knowledge";
+import type { Listing } from "@/lib/types";
+
+const PICKS = ["Good price", "Good model", "Good engine"];
+
+const adsText = (n: number) => `${n} current ${n === 1 ? "ad" : "ads"}`;
+
+async function send(url: string, init: RequestInit): Promise<string | null> {
+  const res = await fetch(url, init).catch(() => null);
+  if (res?.ok) return null;
+  const body = (await res?.json().catch(() => null)) as { error?: string } | null;
+  return body?.error ?? "Could not save. Try again.";
+}
+
+/** The one place to comment on a machine or mark it interesting. Saves to the knowledge base, so similar ads can count too. */
+export default function AddComment({ listing: l, all, onChange }: { listing: Listing; all: Listing[]; onChange: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [picks, setPicks] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const [interesting, setInteresting] = useState(false);
+  const [similar, setSimilar] = useState(false);
+  const [contains, setContains] = useState(l.model ?? "");
+  const [maxPrice, setMaxPrice] = useState(String(suggestedMaxPrice(l.priceEur) ?? ""));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const scope = similar
+    ? { listingId: null, wheeled: l.wheeled, modelContains: contains.trim() || null, maxPriceEur: parseInt(maxPrice, 10) || null }
+    : { listingId: l.id, wheeled: null, modelContains: null, maxPriceEur: null };
+  const matching = open && similar ? all.filter((x) => notesFor(x, [{ id: 0, note: "", interesting, modelKey: l.modelKey, ...scope }]).length > 0).length : 0;
+  const canSave = interesting || picks.length > 0 || text.trim() !== "";
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    const failed = await send("/api/knowledge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelKey: l.modelKey, interesting, ...scope, note: commentText(l, picks, text, similar) }),
+    });
+    if (failed) setError(failed);
+    else {
+      await onChange();
+      setOpen(false);
+      setPicks([]);
+      setText("");
+      setInteresting(false);
+      setSimilar(false);
+    }
+    setBusy(false);
+  };
+
+  const remove = async (id: number) => {
+    const covered = all.filter((x) => x.knowledge?.some((k) => k.id === id)).length;
+    if (!window.confirm(`Remove this comment? It applies to ${adsText(covered)}.`)) return;
+    setBusy(true);
+    setError(null);
+    const failed = await send(`/api/knowledge?id=${id}`, { method: "DELETE" });
+    if (failed) setError(failed);
+    else await onChange();
+    setBusy(false);
+  };
+
+  return (
+    // working in the form must not also select the card, which would move the map
+    <div className="comments" onClick={(e) => e.stopPropagation()}>
+      {l.knowledge?.map((k) => (
+        <div key={k.id} className="comment">
+          <div>
+            <strong>Your comment:</strong> {k.note}
+            {k.interesting && <span className="tag">Interesting</span>}
+            {!k.thisAdOnly && <span className="tag">Similar machines</span>}
+          </div>
+          <button className="chip" disabled={busy} onClick={() => void remove(k.id)}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <button className="chip" disabled={busy} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        Add comment
+      </button>
+      {open && (
+        <div className="comment-form">
+          <input placeholder="Comment" aria-label="Comment" maxLength={300} value={text} onChange={(e) => setText(e.target.value)} />
+          <div className="chips">
+            {PICKS.map((p) => (
+              <button
+                key={p}
+                className={`chip${picks.includes(p) ? " on" : ""}`}
+                aria-pressed={picks.includes(p)}
+                onClick={() => setPicks((cur) => (cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p]))}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+          <label className="check">
+            <input type="checkbox" checked={interesting} onChange={(e) => setInteresting(e.target.checked)} /> Mark as interesting
+          </label>
+          <fieldset className="scope">
+            <legend>Applies to</legend>
+            <label className="check">
+              <input type="radio" name={`scope-${l.id}`} checked={!similar} onChange={() => setSimilar(false)} /> Only this ad
+            </label>
+            <label className="check">
+              <input type="radio" name={`scope-${l.id}`} checked={similar} onChange={() => setSimilar(true)} /> Similar machines
+            </label>
+          </fieldset>
+          {similar && (
+            <>
+              <div className="row">
+                <input placeholder="Name contains" aria-label="Name contains" value={contains} onChange={(e) => setContains(e.target.value)} />
+                <input
+                  className="narrow"
+                  inputMode="numeric"
+                  placeholder="Up to €"
+                  aria-label="Up to euros"
+                  value={maxPrice}
+                  onChange={(e) => setMaxPrice(e.target.value.replace(/\D/g, ""))}
+                />
+              </div>
+              <div className="sub">
+                {l.modelLabel}, {l.wheeled ? "Mobilbagger only" : "not Mobilbagger"}. Matches {adsText(matching)}.
+              </div>
+            </>
+          )}
+          <button className="btn" disabled={busy || !canSave} onClick={() => void save()}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      )}
+      {error && <div className="comment-error">{error}</div>}
+    </div>
+  );
+}

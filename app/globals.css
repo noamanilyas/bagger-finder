@@ -46,11 +46,11 @@ input, select { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(-
 input.narrow { flex: 0 0 90px; }
 
 .list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
-.card { display: flex; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.card { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .card:hover { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
 .card.sel { background: color-mix(in srgb, var(--sel) 10%, var(--panel)); box-shadow: inset 3px 0 0 var(--sel); }
 .card img { width: 88px; height: 66px; object-fit: cover; border-radius: 6px; flex: none; background: var(--line); }
-.body { min-width: 0; }
+.body { flex: 1 1 0; min-width: 0; }
 .title { color: var(--ink); font-weight: 600; text-decoration: none; display: block; overflow-wrap: anywhere; }
 .title:hover { text-decoration: underline; color: var(--accent); }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
@@ -66,12 +66,39 @@ input.narrow { flex: 0 0 90px; }
 .facts { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .facts span { color: var(--muted); }
 .body p { margin: 4px 0 0; color: var(--muted); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* the reason is the point of a deal: never cut it off */
+.body p.deal-why { display: block; }
 .empty { padding: 24px 16px; color: var(--muted); text-align: center; }
+
+.comments { flex: 0 0 100%; display: grid; justify-items: start; gap: 6px; cursor: default; }
+.comment { width: 100%; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.comment .tag { margin-left: 6px; white-space: nowrap; }
+.comment .chip { flex: none; }
+.comment-form { width: 100%; display: grid; gap: 8px; }
+.comment-error { font-size: 12px; color: var(--sel); }
+.check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.check input { flex: none; }
+.scope { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; }
+.scope legend { padding: 0 0 4px; font-size: 12px; color: var(--muted); }
 
 .pin-wrap { background: none; border: 0; }
 .pin { transform: translate(-50%, -50%); background: var(--accent); color: #fff; border: 2px solid #fff; border-radius: 12px; padding: 1px 7px; font: 600 11px system-ui; white-space: nowrap; box-shadow: 0 1px 4px rgb(0 0 0 / 0.4); width: max-content; }
 .pin.sel { background: var(--sel); z-index: 1000; }
 .popup a { font-weight: 600; display: block; margin-bottom: 4px; }
+
+.cost { flex: 0 0 100%; padding: 6px 9px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.cost summary { cursor: pointer; list-style: none; }
+.cost summary::-webkit-details-marker { display: none; }
+.cost-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.cost-head::after { content: "▸"; font-size: 16px; line-height: 1; }
+.cost[open] .cost-head::after { content: "▾"; }
+.cost-totals { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 12px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.cost-note { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.popup { min-width: 280px; } /* keeps rupees and euros on one line */
+.popup .cost { margin-top: 8px; }
+/* Leaflet popups stay white in dark mode */
+.popup .cost-head, .popup .cost-note { color: #5b6875; }
+.popup .cost { background: #e8edfb; }
 
 @media (max-width: 800px) {
   .split { grid-template-columns: 1fr; grid-template-rows: 42% 58%; }
@@ -79,6 +106,12 @@ input.narrow { flex: 0 0 90px; }
   .left { border-right: 0; }
 }
 
-.top-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.top-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.next-scrape { width: 150px; }
+.next-scrape .sub { font-variant-numeric: tabular-nums; }
+.next-scrape progress { display: block; width: 100%; height: 6px; accent-color: var(--accent); }
+.settings { display: grid; gap: 4px; }
+.settings .sub + label { margin-top: 8px; }
+.settings select { width: auto; margin-left: 8px; padding: 4px 8px; }
 .btn.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 .settings label { cursor: pointer; font-weight: 600; }

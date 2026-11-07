@@ -12,6 +12,29 @@ export const isSaleAd = (l: Pick<Listing, "adType">) => l.adType == null || l.ad
 /** The same machine is often advertised on several sites; it must count once. */
 const machineKey = (l: Listing) => `${l.modelKey}|${l.year ?? ""}|${l.hours ?? ""}|${l.priceEur ?? ""}`;
 
+/**
+ * Machines that appear on more than one site, to see how big the duplicate problem is. Only counts ads with a year,
+ * hours and a price, because two ads that merely lack those are not the same machine.
+ */
+export function crossSiteDuplicates(listings: Listing[]): { machines: number; extraAds: number } {
+  const sites = new Map<string, Set<string>>();
+  const ads = new Map<string, number>();
+  for (const l of listings) {
+    if (l.year == null || l.hours == null || l.priceEur == null) continue;
+    const key = machineKey(l);
+    sites.set(key, (sites.get(key) ?? new Set()).add(l.source));
+    ads.set(key, (ads.get(key) ?? 0) + 1);
+  }
+  let machines = 0;
+  let extraAds = 0;
+  for (const [key, where] of sites) {
+    if (where.size < 2) continue;
+    machines++;
+    extraAds += ads.get(key)! - 1;
+  }
+  return { machines, extraAds };
+}
+
 function median(values: number[]): number {
   const s = [...values].sort((a, b) => a - b);
   const mid = s.length >> 1;

@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { planHistory, type HistoryHead } from "./history";
+import type { KnowledgeNote } from "./knowledge";
 import type { Listing } from "./types";
 
 let client: SupabaseClient | null | undefined;
@@ -174,4 +175,121 @@ export async function recordHistory(listings: Listing[], now: string): Promise<{
     if (error) throw new Error(`Supabase history cleanup failed: ${error.message}`);
   }
   return { added: rows.length, touched: plan.touch.length, removed: plan.remove.length };
+}
+
+/* ---- knowledge base: what the buyer told us about kinds of machines (see lib/knowledge.ts) ---- */
+
+const noteFromRow = (r: any): KnowledgeNote => ({
+  id: r.id,
+  interesting: r.interesting ?? false,
+  listingId: r.listing_id ?? null,
+  modelKey: r.model_key,
+  wheeled: r.wheeled,
+  modelContains: r.model_contains,
+  maxPriceEur: r.max_price_eur == null ? null : Number(r.max_price_eur),
+  note: r.note,
+});
+
+let warnedKnowledge = false;
+
+/** All notes. A database problem means no notes, never a failed scrape or an empty page. */
+export async function loadKnowledge(): Promise<KnowledgeNote[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data, error } = await sb.from("machine_knowledge").select("*").order("id");
+  if (error) {
+    if (!warnedKnowledge) console.warn(`[knowledge] notes not loaded, carrying on without them: ${error.message}`);
+    warnedKnowledge = true;
+    return [];
+  }
+  return data.map(noteFromRow);
+}
+
+export async function addKnowledge(n: Omit<KnowledgeNote, "id">): Promise<KnowledgeNote> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Supabase is not configured");
+  const { data, error } = await sb
+    .from("machine_knowledge")
+    .insert({
+      interesting: n.interesting,
+      listing_id: n.listingId,
+      model_key: n.modelKey,
+      wheeled: n.wheeled,
+      model_contains: n.modelContains,
+      max_price_eur: n.maxPriceEur,
+      note: n.note,
+    })
+    .select("*")
+    .single();
+  if (error) throw new Error(`Supabase write failed: ${error.message}`);
+  return noteFromRow(data);
+}
+
+export async function removeKnowledge(id: number): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Supabase is not configured");
+  const { error } = await sb.from("machine_knowledge").delete().eq("id", id);
+  if (error) throw new Error(`Supabase delete failed: ${error.message}`);
+}
+
+/* ---- scrape runs: the schedule is derived from these, so it survives restarts ---- */
+
+let warnedNoRunsTable = false;
+function warnRuns(action: string, message: string) {
+  const missing = /scrape_runs/.test(message) && /schema cache|does not exist/.test(message);
+  if (missing) {
+    if (warnedNoRunsTable) return;
+    warnedNoRunsTable = true;
+    console.warn("[runs] the scrape_runs table is missing: run supabase/schema.sql in the Supabase SQL editor. Using the local status file until then.");
+    return;
+  }
+  console.warn(`[runs] could not ${action}: ${message}`);
+}
+
+/** Records that a scrape started. Returns its id, or null: a failing database must not stop a scrape. */
+export async function startRun(trigger: string, startedAt: string): Promise<number | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb.from("scrape_runs").insert({ started_at: startedAt, trigger }).select("id").single();
+  if (error) {
+    warnRuns("record the scrape start", error.message);
+    return null;
+  }
+  return (data as any).id as number;
+}
+
+/** Only closes a run that is still running, so the scraper's own result is never overwritten. */
+export async function finishRun(id: number, r: { status: "done" | "failed"; listings?: number; message: string }): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("scrape_runs")
+    .update({ finished_at: new Date().toISOString(), status: r.status, listings: r.listings ?? null, message: r.message.slice(0, 500) })
+    .eq("id", id)
+    .eq("status", "running");
+  if (error) warnRuns("record the scrape result", error.message);
+}
+
+/** When the latest scrape started, or null when there is none or the database cannot say. */
+export async function lastRunStartedAt(): Promise<string | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb.from("scrape_runs").select("started_at").order("started_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) {
+    warnRuns("read the last scrape", error.message);
+    return null;
+  }
+  return data ? ((data as any).started_at as string) : null;
+}
+
+/** Runs left "running" by a server that died: they would look unfinished forever. */
+export async function closeStaleRuns(olderThanIso: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("scrape_runs")
+    .update({ finished_at: new Date().toISOString(), status: "failed", message: "Interrupted: the server stopped during this scrape" })
+    .eq("status", "running")
+    .lt("started_at", olderThanIso);
+  if (error) warnRuns("close interrupted scrapes", error.message);
 }

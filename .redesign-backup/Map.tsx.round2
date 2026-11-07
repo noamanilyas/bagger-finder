@@ -1,0 +1,132 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { costPanel, negotiatedText, type PkrRate } from "@/lib/costs";
+import { isSaleAd } from "@/lib/market";
+import type { Listing } from "@/lib/types";
+
+type Props = {
+  listings: Listing[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  pkrRate: PkrRate | null;
+};
+
+const fmtPrice = (p: number | null) => (p == null ? "?" : p >= 1000 ? `${Math.round(p / 1000)}k` : String(p));
+
+/** Listings only carry town-level coordinates; nudge identical ones apart so pins don't hide each other. */
+function jitter(id: string, base: number): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return base + ((h % 1000) / 1000) * 0.012;
+}
+
+function iconFor(l: Listing, selected: boolean) {
+  return L.divIcon({
+    className: "pin-wrap",
+    html: `<div class="pin${selected ? " sel" : ""}">€${fmtPrice(l.priceEur)}</div>`,
+    iconSize: [0, 0],
+  });
+}
+
+function element(tag: string, className: string, text = ""): HTMLElement {
+  const el = document.createElement(tag);
+  el.className = className;
+  el.textContent = text;
+  return el;
+}
+
+function costFor(l: Listing, rate: PkrRate | null): HTMLElement {
+  const p = costPanel(l.priceEur, rate, isSaleAd(l));
+  const totals = element("span", "cost-totals");
+  for (const text of [p.pkr, p.eur]) {
+    if (text) totals.append(element("strong", "", text));
+  }
+  const summary = document.createElement("summary");
+  summary.append(element("span", "cost-head", "Pakistan cost"), totals);
+  const root = element("details", "cost");
+  if (p.negotiated) summary.append(element("span", "cost-note", p.negotiated));
+  root.append(summary, element("div", "cost-note", p.breakdown), element("div", "cost-note", p.rateNote));
+  return root;
+}
+
+function popupFor(l: Listing, rate: PkrRate | null): HTMLElement {
+  const root = document.createElement("div");
+  root.className = "popup";
+  const a = document.createElement("a");
+  a.href = l.url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.textContent = l.title;
+  const meta = document.createElement("div");
+  meta.textContent = [l.modelLabel, l.priceEur != null ? `€${l.priceEur.toLocaleString("de-DE")}` : null, l.year, l.location]
+    .filter(Boolean)
+    .join(" · ");
+  root.append(a, meta);
+  if (l.priceEur != null && isSaleAd(l)) root.append(element("div", "cost-note", negotiatedText(l.priceEur)));
+  root.append(costFor(l, rate));
+  return root;
+}
+
+export default function Map({ listings, selectedId, onSelect, pkrRate }: Props) {
+  const el = useRef<HTMLDivElement>(null);
+  const map = useRef<L.Map | null>(null);
+  const layer = useRef<L.LayerGroup | null>(null);
+  const markers = useRef(new globalThis.Map<string, { marker: L.Marker; listing: Listing }>());
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  // read when a popup opens, so a rate arriving later does not rebuild the markers and move the map
+  const pkrRateRef = useRef(pkrRate);
+  pkrRateRef.current = pkrRate;
+
+  // create the map once
+  useEffect(() => {
+    if (!el.current || map.current) return;
+    const m = L.map(el.current, { zoomControl: true }).setView([51.1, 10.4], 6);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(m);
+    layer.current = L.layerGroup().addTo(m);
+    map.current = m;
+    return () => {
+      m.remove();
+      map.current = null;
+    };
+  }, []);
+
+  // (re)build markers when the visible listings change
+  useEffect(() => {
+    const m = map.current;
+    const group = layer.current;
+    if (!m || !group) return;
+    group.clearLayers();
+    markers.current.clear();
+    const pts: L.LatLngTuple[] = [];
+    for (const l of listings) {
+      if (l.lat == null || l.lng == null) continue;
+      const pos: L.LatLngTuple = [jitter(l.id, l.lat), jitter(l.id + "x", l.lng)];
+      const marker = L.marker(pos, { icon: iconFor(l, false) })
+        .bindPopup(() => popupFor(l, pkrRateRef.current))
+        .on("click", () => onSelectRef.current(l.id));
+      marker.addTo(group);
+      markers.current.set(l.id, { marker, listing: l });
+      pts.push(pos);
+    }
+    if (pts.length) m.fitBounds(L.latLngBounds(pts).pad(0.15), { maxZoom: 9 });
+  }, [listings]);
+
+  // highlight + fly to the selected listing
+  useEffect(() => {
+    markers.current.forEach(({ marker, listing }, id) => marker.setIcon(iconFor(listing, id === selectedId)));
+    const hit = selectedId ? markers.current.get(selectedId) : null;
+    if (hit && map.current) {
+      map.current.flyTo(hit.marker.getLatLng(), Math.max(map.current.getZoom(), 9), { duration: 0.6 });
+      hit.marker.openPopup();
+    }
+  }, [selectedId]);
+
+  return <div ref={el} className="map" />;
+}

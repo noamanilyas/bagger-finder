@@ -80,3 +80,38 @@ create table if not exists public.scraper_settings (
 );
 
 alter table public.scraper_settings enable row level security;
+
+-- Every scrape, automatic or manual. The next automatic scrape is due one interval after the
+-- latest started_at, so the schedule survives restarts, crashes and redeploys.
+create table if not exists public.scrape_runs (
+  id          bigint generated always as identity primary key,
+  started_at  timestamptz not null default now(),
+  finished_at timestamptz,
+  trigger     text not null,                    -- auto | manual
+  status      text not null default 'running',  -- running | done | failed
+  listings    integer,
+  message     text
+);
+
+create index if not exists scrape_runs_started_idx on public.scrape_runs (started_at desc);
+
+alter table public.scrape_runs enable row level security;
+
+-- Knowledge base: what the buyer told us about kinds of machines. A note reaches the AI only for ads it
+-- matches, so the main prompt does not grow. Add notes with `npm run knowledge` or the Table Editor.
+create table if not exists public.machine_knowledge (
+  id             bigint generated always as identity primary key,
+  model_key      text not null,    -- wanted model from lib/config.ts, e.g. yanmar-55
+  wheeled        boolean,          -- true: wheeled only, false: not wheeled, empty: both
+  model_contains text,             -- narrows the model: b55w matches "B 55W-2" and "B55 W-1"
+  max_price_eur  numeric,          -- the note does not apply above this price
+  note           text not null,    -- what the AI and the app show, in plain words
+  created_at     timestamptz not null default now()
+);
+
+alter table public.machine_knowledge enable row level security;
+
+-- Comments as well as interesting marks, on one ad or on similar machines (safe to run again).
+alter table public.machine_knowledge
+  add column if not exists interesting boolean not null default false,  -- shows as a deal and gets an AI review
+  add column if not exists listing_id  text;                            -- set: only this ad. Not linked to listings, so a comment outlives an expired ad

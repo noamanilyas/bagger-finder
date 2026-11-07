@@ -1,0 +1,410 @@
+"use client";
+
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import AddComment from "@/components/AddComment";
+import NextScrape from "@/components/NextScrape";
+import { DEFAULT_LIMITS } from "@/lib/config";
+import { costPanel, type PkrRate } from "@/lib/costs";
+import { INTERVAL_CHOICES, type Schedule } from "@/lib/schedule";
+import type { ScraperSettings } from "@/lib/settings";
+import type { Listing, Status } from "@/lib/types";
+
+const Map = dynamic(() => import("@/components/Map"), {
+  ssr: false,
+  loading: () => <div className="map map-loading">Loading map…</div>,
+});
+
+type Payload = {
+  updatedAt: string | null;
+  listings: Listing[];
+  models: { key: string; label: string }[];
+  status: Status;
+  schedule: Schedule | null;
+};
+
+const SORTS = {
+  interesting: "Most interesting",
+  newest: "Newest first",
+  priceAsc: "Price: low → high",
+  priceDesc: "Price: high → low",
+  yearDesc: "Year: newest",
+  yearAsc: "Year: oldest",
+  hoursAsc: "Hours: lowest",
+  model: "Model A–Z",
+} as const;
+type SortKey = keyof typeof SORTS;
+
+/** nulls always sort last */
+const num = (a: number | null, b: number | null, dir: 1 | -1) =>
+  a == null ? (b == null ? 0 : 1) : b == null ? -1 : (a - b) * dir;
+
+/** Interesting first, then not reviewed yet, then cheap but doubtful, then everything else. */
+function dealRank(l: Listing): number {
+  if (!isDeal(l)) return 3;
+  if (l.aiVerdict === "interesting") return 0;
+  return l.aiVerdict === "suspicious" ? 2 : 1;
+}
+
+function sorter(key: SortKey): (a: Listing, b: Listing) => number {
+  switch (key) {
+    case "interesting":
+      return (a, b) => dealRank(a) - dealRank(b) || num(a.belowPct, b.belowPct, -1) || b.firstSeen.localeCompare(a.firstSeen);
+    case "priceAsc": return (a, b) => num(a.priceEur, b.priceEur, 1);
+    case "priceDesc": return (a, b) => num(a.priceEur, b.priceEur, -1);
+    case "yearDesc": return (a, b) => num(a.year, b.year, -1);
+    case "yearAsc": return (a, b) => num(a.year, b.year, 1);
+    case "hoursAsc": return (a, b) => num(a.hours, b.hours, 1);
+    case "model": return (a, b) => a.modelLabel.localeCompare(b.modelLabel) || num(a.priceEur, b.priceEur, 1);
+    default: return (a, b) => b.firstSeen.localeCompare(a.firstSeen);
+  }
+}
+
+const eur = (n: number) => `€${n.toLocaleString("de-DE")}`;
+
+/** So "b55w" finds "B 55W-2" and "robex 55" finds "ROBEX55W-9A". */
+const squash = (s: string) => s.toLowerCase().replace(/[\s-]/g, "");
+
+/** A filter box holds digits; empty means no limit. */
+const limitOf = (s: string) => parseInt(s, 10) || null;
+
+const DEAL_LABEL = {
+  interesting: "Interesting",
+  suspicious: "Cheap, but check carefully",
+  not_comparable: "",
+  unchecked: "Below market, not reviewed",
+};
+
+/** Well below similar machines or marked interesting by the buyer, unless AI found the price is not comparable. */
+function isDeal(l: Listing): boolean {
+  return (l.flagged || !!l.knowledge?.some((k) => k.interesting)) && l.aiVerdict !== "not_comparable";
+}
+
+const dealLabel = (l: Listing) =>
+  !l.aiVerdict && !l.flagged ? "Marked interesting, not reviewed" : DEAL_LABEL[l.aiVerdict ?? "unchecked"];
+
+const dealWhy = (l: Listing) =>
+  [
+    l.flagged && `${l.belowPct}% below the median of ${l.marketCount} similar machines in your range (${eur(l.marketMedian!)})`,
+    l.aiReason && `AI: ${l.aiReason}`,
+  ]
+    .filter((part): part is string => !!part)
+    .map((part) => part.replace(/\.$/, ""))
+    .join(". ");
+
+function PakistanCost({ priceEur, rate }: { priceEur: number | null; rate: PkrRate | null }) {
+  const p = costPanel(priceEur, rate);
+  return (
+    // opening the details must not also select the card, which would move the map
+    <details className="cost" onClick={(e) => e.stopPropagation()}>
+      <summary>
+        <span className="cost-head">Pakistan cost</span>
+        <span className="cost-totals">
+          {p.pkr && <strong>{p.pkr}</strong>}
+          <strong>{p.eur}</strong>
+        </span>
+      </summary>
+      <div className="cost-note">{p.breakdown}</div>
+      <div className="cost-note">{p.rateNote}</div>
+    </details>
+  );
+}
+
+export default function Home() {
+  const [data, setData] = useState<Payload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortKey>("interesting");
+  const [models, setModels] = useState<Set<string>>(new Set());
+  const [source, setSource] = useState("all");
+  const [maxPrice, setMaxPrice] = useState(String(DEFAULT_LIMITS.maxPrice ?? ""));
+  const [maxYear, setMaxYear] = useState(String(DEFAULT_LIMITS.maxYear ?? ""));
+  const [modelText, setModelText] = useState("");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [wheeledOnly, setWheeledOnly] = useState(true);
+  const [dealsOnly, setDealsOnly] = useState(false);
+  const [settings, setSettings] = useState<ScraperSettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pkrRate, setPkrRate] = useState<PkrRate | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/listings", { cache: "no-store" });
+      setData((await res.json()) as Payload);
+      setError(null);
+    } catch {
+      setError("Could not load listings.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    fetch("/api/settings", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error();
+        setSettings((await res.json()) as ScraperSettings);
+      })
+      .catch(() => setError("Could not load scraper settings."));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/rate", { cache: "no-store" })
+      .then(async (res) => {
+        if (res.ok) setPkrRate((await res.json()) as PkrRate);
+      })
+      .catch(() => {}); // the cost panels say when there is no rate
+  }, []);
+
+  const saveSetting = async (change: Partial<ScraperSettings>) => {
+    if (!settings) return;
+    const before = settings;
+    setSettings({ ...settings, ...change }); // a control must respond at once; undone below if saving fails
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change),
+    }).catch(() => null);
+    if (!res?.ok) {
+      setSettings(before);
+      setError("Could not save scraper settings.");
+      return;
+    }
+    if (change.intervalMinutes !== undefined) await load(); // the next scrape time follows the interval
+  };
+
+  const running = data?.status.running ?? false;
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [running, load]);
+
+  const refresh = async () => {
+    const res = await fetch("/api/scrape", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxPrice: limitOf(maxPrice), maxYear: limitOf(maxYear) }),
+    });
+    const result = (await res.json().catch(() => null)) as { started?: boolean; reason?: string } | null;
+    await load();
+    if (result && !result.started) setError(`Not started: ${result.reason ?? "try again shortly."}`);
+  };
+
+  const sources = useMemo(() => [...new Set((data?.listings ?? []).map((l) => l.source))].sort(), [data]);
+
+  const visible = useMemo(() => {
+    const max = limitOf(maxPrice);
+    const yearMax = limitOf(maxYear);
+    const modelQ = squash(modelText);
+    const q = query.trim().toLowerCase();
+    return (data?.listings ?? [])
+      .filter((l) => models.size === 0 || models.has(l.modelKey))
+      .filter((l) => !wheeledOnly || l.wheeled)
+      .filter((l) => !dealsOnly || isDeal(l))
+      .filter((l) => source === "all" || l.source === source)
+      // an unknown price or year stays visible, same as in the scraper
+      .filter((l) => max == null || l.priceEur == null || l.priceEur <= max)
+      .filter((l) => yearMax == null || l.year == null || l.year <= yearMax)
+      .filter((l) => !modelQ || squash(`${l.title} ${l.make ?? ""} ${l.model ?? ""}`).includes(modelQ))
+      .filter((l) => !q || `${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
+      .sort(sorter(sort));
+  }, [data, models, source, maxPrice, maxYear, modelText, query, sort, wheeledOnly, dealsOnly]);
+
+  const select = useCallback((id: string) => {
+    setSelected(id);
+    document.getElementById(`item-${id}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, []);
+
+  const toggleModel = (k: string) =>
+    setModels((cur) => {
+      const next = new Set(cur);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  const failed = Object.entries(data?.status.sources ?? {}).filter(([, s]) => !s.ok);
+  const pagesDone = data?.status.pagesDone ?? 0;
+  const pagesTotal = data?.status.pagesTotal ?? 0;
+  const lastActivity = data?.status.lastActivity;
+  const quietSeconds = lastActivity ? Math.max(0, Math.round((Date.now() - Date.parse(lastActivity)) / 1000)) : 0;
+
+  return (
+    <div className="app">
+      <header className="top">
+        <div>
+          <h1>Bagger Finder</h1>
+          <div className="sub">
+            {data ? `${visible.length} of ${data.listings.length} listings` : "Loading…"}
+            {data?.updatedAt && ` · updated ${new Date(data.updatedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`}
+          </div>
+        </div>
+        <div className="top-actions">
+        {data?.schedule && !running && <NextScrape schedule={data.schedule} onDue={load} />}
+        <button onClick={() => setSettingsOpen((v) => !v)} className="btn secondary" aria-expanded={settingsOpen}>
+          Scraper settings
+        </button>
+        <button onClick={() => void refresh()} disabled={running} className="btn" title="Scrapes using the Max € and Max year set in the filters">
+
+          {running ? "Scraping…" : "Refresh now"}
+        </button>
+        </div>
+      </header>
+
+      {settingsOpen && (
+        <div className="notice settings">
+          <label>
+            <input
+              type="checkbox"
+              checked={settings?.mobileOnly ?? false}
+              disabled={!settings}
+              onChange={(e) => void saveSetting({ mobileOnly: e.target.checked })}
+            />{" "}
+            Only scrape Mobilbagger
+          </label>
+          <div className="sub">Used from the next scrape, including the automatic ones. Machines already stored stay until they expire.</div>
+          <label>
+            Scrape automatically every
+            <select
+              value={settings?.intervalMinutes ?? ""}
+              disabled={!settings}
+              onChange={(e) => void saveSetting({ intervalMinutes: Number(e.target.value) })}
+            >
+              {INTERVAL_CHOICES.map((c) => (
+                <option key={c.minutes} value={c.minutes}>{c.label}</option>
+              ))}
+            </select>
+          </label>
+          <div className="sub">
+            {data && !data.schedule
+              ? "Automatic scraping is switched off on this server (AUTO_SCRAPE=false)."
+              : "The next scrape is due this long after the last one started, whether it was automatic or “Refresh now”. A restart does not reset it; a missed one runs at startup."}
+          </div>
+        </div>
+      )}
+      {data && running && (
+        <div className="notice" role="status">
+          <div>{data.status.message}</div>
+          {pagesTotal > 0 && <progress value={pagesDone} max={pagesTotal} style={{ width: "100%" }} aria-label="Pages read" />}
+          <div className="sub">
+            {pagesTotal > 0 && `${pagesDone} of ${pagesTotal} pages done · `}
+            {quietSeconds >= 120
+              ? `no progress for ${Math.round(quietSeconds / 60)} min, it may be stuck (a new scrape is allowed after 10 min)`
+              : `last update ${quietSeconds}s ago`}
+            {" · safe to close this tab; the list updates when it finishes"}
+          </div>
+        </div>
+      )}
+      {data && !running && failed.length > 0 && (
+        <div className="notice">
+          {`${failed.length} source(s) failed: ${failed.map(([id, s]) => `${id} (${s.error ?? "error"})`).join("; ")}`}
+        </div>
+      )}
+      {error && <div className="notice err">{error}</div>}
+
+      <div className="split">
+        <aside className="left">
+          <div className="controls">
+            <div className="chips">
+              <button className={`chip wheel${wheeledOnly ? " on" : ""}`} onClick={() => setWheeledOnly((v) => !v)}>
+                Mobilbagger only
+              </button>
+              <button className={`chip deal${dealsOnly ? " on" : ""}`} onClick={() => setDealsOnly((v) => !v)}>
+                Below market only
+              </button>
+              {(data?.models ?? []).map((m) => (
+                <button key={m.key} className={`chip${models.has(m.key) ? " on" : ""}`} onClick={() => toggleModel(m.key)}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <div className="row">
+              <input placeholder="Search text or town" value={query} onChange={(e) => setQuery(e.target.value)} />
+              <input
+                className="narrow"
+                inputMode="numeric"
+                placeholder="Max €"
+                value={maxPrice}
+                aria-label="Max price in euros"
+                onChange={(e) => setMaxPrice(e.target.value.replace(/\D/g, ""))}
+              />
+            </div>
+            <div className="row">
+              <input placeholder="Model, e.g. B55W" aria-label="Model" value={modelText} onChange={(e) => setModelText(e.target.value)} />
+              <input
+                className="narrow"
+                inputMode="numeric"
+                placeholder="Max year"
+                aria-label="Max year"
+                value={maxYear}
+                onChange={(e) => setMaxYear(e.target.value.replace(/\D/g, ""))}
+              />
+            </div>
+            <div className="row">
+              <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} aria-label="Sort">
+                {Object.entries(SORTS).map(([k, label]) => (
+                  <option key={k} value={k}>{label}</option>
+                ))}
+              </select>
+              <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source">
+                <option value="all">All sources</option>
+                {sources.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <ul className="list">
+            {visible.map((l) => (
+              <li key={l.id} id={`item-${l.id}`} className={`card${l.id === selected ? " sel" : ""}`} onClick={() => select(l.id)}>
+                {l.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={l.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
+                )}
+                <div className="body">
+                  <a href={l.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="title">
+                    {l.title}
+                  </a>
+                  <div className="tags">
+                    <span className="tag model">{l.modelLabel}</span>
+                    {l.wheeled && <span className="tag wheel">Mobilbagger</span>}
+                    <span className="tag">{l.source}</span>
+                    {l.lat == null && <span className="tag warn">no map location</span>}
+                    {isDeal(l) && <span className={`tag deal ${l.aiVerdict ?? "unchecked"}`}>{dealLabel(l)}</span>}
+                  </div>
+                  <div className="facts">
+                    <strong>{l.priceEur != null ? eur(l.priceEur) : "Price on request"}</strong>
+                    {l.year && <span>{l.year}</span>}
+                    {l.hours != null && <span>{l.hours.toLocaleString("de-DE")} h</span>}
+                    {l.location && <span>{l.location}</span>}
+                  </div>
+                  {isDeal(l) && dealWhy(l) && <p className="deal-why">{dealWhy(l)}</p>}
+                  {l.description && <p>{l.description}</p>}
+                </div>
+                <PakistanCost priceEur={l.priceEur} rate={pkrRate} />
+                <AddComment listing={l} all={data?.listings ?? []} onChange={load} />
+              </li>
+            ))}
+            {data && visible.length === 0 && (
+              <li className="empty">
+                {data.listings.length === 0
+                  ? running
+                    ? "First scrape in progress — listings will appear here in a few minutes."
+                    : "No listings yet. Press “Refresh now” to run the first scrape."
+                  : "No listings match these filters."}
+              </li>
+            )}
+          </ul>
+        </aside>
+
+        <main className="right">
+          <Map listings={visible} selectedId={selected} onSelect={select} pkrRate={pkrRate} />
+        </main>
+      </div>
+    </div>
+  );
+}

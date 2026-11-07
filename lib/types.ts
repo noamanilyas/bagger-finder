@@ -39,6 +39,8 @@ export type Listing = {
   aiReason: string | null;
   aiModel: string | null;
   aiCheckKey: string | null;
+  /** the buyer's comments that match this ad (see lib/knowledge.ts); added when reading, not stored on the listing */
+  knowledge?: { id: number; note: string; interesting: boolean; thisAdOnly: boolean }[];
 };
 
 export type Db = {

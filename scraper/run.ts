@@ -10,16 +10,20 @@
  */
 import { CheerioCrawler, PlaywrightCrawler } from "crawlee";
 import crypto from "node:crypto";
-import { applyMarket } from "../lib/market";
-import { NON_EUROPE, SOURCES, WANTED, inEurope, isWheeled, looksRelevant, matchModel, scrapeLimits, withinLimits } from "../lib/config";
-import { hasSupabase, deleteOlderThan, loadListings, recordHistory, saveListings } from "../lib/supabase";
+import { applyMarket, crossSiteDuplicates } from "../lib/market";
+import { SOURCES, WANTED, isWheeled, looksRelevant, matchModel, scrapeLimits, withinLimits } from "../lib/config";
+import { expandCountryCode, inEurope, isExcludedPlace } from "../lib/countries";
+import { cookieLabels } from "../lib/languages";
+import { hasSupabase, deleteOlderThan, finishRun, loadListings, recordHistory, saveListings } from "../lib/supabase";
 import { DEFAULT_SETTINGS, loadSettings } from "../lib/settings";
 import { readDb, readGeoCache, readStatus, writeDb, writeStatus } from "../lib/store";
 import type { Listing, SourceResult, Status } from "../lib/types";
-import { collectBlocksCheerio, withoutQuery } from "./cards";
+import { LAUNCH_OPTIONS, readCards, skipHeavyContent } from "./browser";
+import { collectBlocksCheerio } from "./cards";
 import { checkFlagged } from "./check";
 import { extract, hasAi, heuristicItem, type Block, type Extracted } from "./extract";
 import { geocode } from "./geocode";
+import { isPhoto } from "./images";
 
 const MAX_CARDS_PER_PAGE = 60;
 const SAME_SITE_DELAY_SECS = 3;
@@ -128,9 +132,9 @@ async function processBlocks(job: Job, blocks: Block[], info: (m: string) => voi
   const byHref = new Map(relevant.map((b) => [b.href, b]));
   let aiLeft = MAX_AI_CARDS_PER_RUN - counts.sentToAi;
   for (const b of relevant) {
-    const parsed = heuristicItem(b);
-    if (!(matchModel(parsed.title) ?? matchModel(b.text)) || !withinLimits(parsed, limits)) continue;
-    if (settings.mobileOnly && !isWheeled(`${parsed.title} ${b.text}`)) continue;
+    const parsed = heuristicItem(b, source);
+    if (!(matchModel(parsed.title, source.languages) ?? matchModel(b.text, source.languages)) || !withinLimits(parsed, limits)) continue;
+    if (settings.mobileOnly && !isWheeled(`${parsed.title} ${b.text}`, parsed.title)) continue;
     const id = listingId(b.href);
     if (seenThisRun.has(id)) continue;
     seenThisRun.add(id);
@@ -139,7 +143,7 @@ async function processBlocks(job: Job, blocks: Block[], info: (m: string) => voi
     if (prev && prev.adType && prev.cardHash === cardHash(b.text)) {
       items.push(fromKnown(prev, b));
       counts.reused++;
-    } else if (hasAi() && aiLeft > 0) {
+    } else if (hasAi() && aiLeft > 0 && source.ai !== false) {
       forAi.push(b);
       aiLeft--;
     } else {
@@ -147,7 +151,7 @@ async function processBlocks(job: Job, blocks: Block[], info: (m: string) => voi
     }
   }
   counts.sentToAi += forAi.length;
-  const { items: extracted, via } = await extract(forAi, source.name);
+  const { items: extracted, via } = await extract(forAi, source);
   items.push(...extracted);
   if (forAi.length > 0) status.extractor = via;
   stat.pages += 1;
@@ -173,12 +177,14 @@ async function crawl() {
     }
   }
 
-  const needBrowser: Job[] = FORCE_BROWSER ? [...jobs] : [];
-  status.pagesTotal = FORCE_BROWSER ? 0 : jobs.length;
+  const browserOnly = (j: Job) => FORCE_BROWSER || SOURCES.find((s) => s.id === j.source)?.browser === true;
+  const needBrowser: Job[] = jobs.filter(browserOnly);
+  const httpJobs = jobs.filter((j) => !browserOnly(j));
+  status.pagesTotal = httpJobs.length;
   const failed = new Map<string, string>(); // url -> last error
 
   // ---- phase 1: plain HTTP + Cheerio ---------------------------------------------------------
-  if (!FORCE_BROWSER) {
+  if (httpJobs.length > 0) {
     const crawler = new CheerioCrawler({
       // The sites run side by side, but each one still gets at most one page every few seconds.
       maxConcurrency: SOURCES.filter((s) => s.enabled).length,
@@ -188,8 +194,8 @@ async function crawl() {
       async requestHandler({ $, request, log }) {
         const job: Job = { url: request.url, source: String(request.userData.source) };
         startingPage(job);
-        const isListing = SOURCES.find((s) => s.id === job.source)?.isListing;
-        const blocks = collectBlocksCheerio($, request.loadedUrl ?? request.url, isListing);
+        const source = SOURCES.find((s) => s.id === job.source);
+        const blocks = collectBlocksCheerio($, request.loadedUrl ?? request.url, source?.isListing, source?.spacedText);
         // A normal results page has dozens of links; if it has almost none it was probably rendered by
         // JavaScript (or blocked), so retry it in a real browser. Plenty of links but no match = no results.
         const looksEmpty = blocks.length < 15;
@@ -206,7 +212,7 @@ async function crawl() {
       },
     });
     save("Fetching pages…");
-    await crawler.run(jobs.map((j) => ({ url: j.url, uniqueKey: `${j.url}#http`, userData: { source: j.source } })));
+    await crawler.run(httpJobs.map((j) => ({ url: j.url, uniqueKey: `${j.url}#http`, userData: { source: j.source } })));
   }
 
   // ---- phase 2: headless Chromium, only for pages that need it -------------------------------
@@ -219,69 +225,13 @@ async function crawl() {
       maxRequestRetries: 2,
       navigationTimeoutSecs: 45,
       requestHandlerTimeoutSecs: 300,
-      launchContext: {
-        launchOptions: { headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] },
-      },
-      preNavigationHooks: [
-        async ({ page }) => {
-          // We only need text and links: skip images, fonts and media to save memory and bandwidth.
-          await page.route("**/*", (route) =>
-            ["image", "font", "media"].includes(route.request().resourceType()) ? route.abort() : route.continue(),
-          );
-        },
-      ],
+      launchContext: { launchOptions: LAUNCH_OPTIONS },
+      preNavigationHooks: [skipHeavyContent],
       async requestHandler({ page, request, log }) {
         const job: Job = { url: request.url, source: String(request.userData.source) };
         startingPage(job, " in a browser");
-
-        await page.waitForLoadState("domcontentloaded");
-        // Dismiss cookie banners if there is one.
-        for (const label of ["Alle akzeptieren", "Akzeptieren", "Zustimmen", "Accept all"]) {
-          await page.getByRole("button", { name: label }).first().click({ timeout: 1200 }).catch(() => undefined);
-        }
-        await page.waitForTimeout(2000);
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await page.waitForTimeout(1000);
-
-        // Same rule as collectBlocksCheerio: a card must not grow into an ancestor holding another listing.
-        const isListing = SOURCES.find((s) => s.id === job.source)?.isListing;
-        const allLinks = await page.$$eval("a[href]", (as) => as.map((a) => (a as HTMLAnchorElement).href));
-        const listingLinks = isListing ? allLinks.filter(isListing).map(withoutQuery) : [];
-
-        const blocks: Block[] = await page.evaluate((listings) => {
-          const listingSet = new Set(listings);
-          const best = new Map<string, { text: string; img: string | null }>();
-          document.querySelectorAll("a[href]").forEach((a) => {
-            const href = (a as HTMLAnchorElement).href;
-            if (!/^https?:/.test(href) || href.split("#")[0] === location.href.split("#")[0]) return;
-            const own = href.split(/[?#]/)[0];
-            let el: HTMLElement = a as HTMLElement;
-            let text = el.innerText || "";
-            let container: HTMLElement = el;
-            for (let i = 0; i < 5 && el.parentElement; i++) {
-              el = el.parentElement;
-              const t = el.innerText || "";
-              if (t.length > 800) break;
-              const holdsOther = Array.from(el.querySelectorAll("a[href]")).some((x) => {
-                const other = (x as HTMLAnchorElement).href.split(/[?#]/)[0];
-                return other !== own && listingSet.has(other);
-              });
-              if (holdsOther) break;
-              text = t;
-              container = el;
-            }
-            text = text.replace(/\s+/g, " ").trim();
-            if (text.length < 25) return;
-            const imgEl = container.querySelector("img");
-            const img = imgEl ? imgEl.getAttribute("src") || imgEl.getAttribute("data-src") : null;
-            const prev = best.get(href);
-            if (!prev || text.length > prev.text.length) {
-              best.set(href, { text: text.slice(0, 600), img: img ? new URL(img, location.href).toString() : null });
-            }
-          });
-          return [...best].map(([href, v]) => ({ href, text: v.text, img: v.img }));
-        }, listingLinks);
-
+        const source = SOURCES.find((s) => s.id === job.source);
+        const blocks = await readCards(page, cookieLabels(source?.languages ?? []), source?.isListing);
         await processBlocks(job, blocks, (m) => log.info(m), true);
         failed.delete(job.url); // the browser got through
         finishedPage();
@@ -313,19 +263,25 @@ async function merge() {
   const limits = scrapeLimits();
   console.log(`[scrape] limits: max price ${limits.maxPrice ?? "none"}, max year ${limits.maxYear ?? "none"}`);
 
-  for (const [i, { sourceName, item, cardHash: hash, cardText }] of collected.entries()) {
+  for (const [i, { source: sourceId, sourceName, item, cardHash: hash, cardText }] of collected.entries()) {
     if (i % 25 === 0) save(`Matching models and finding map locations: ${i + 1} of ${collected.length} ads…`);
+    const source = SOURCES.find((s) => s.id === sourceId)!;
     const text = [item.title, item.make, item.model, item.description].filter(Boolean).join(" ");
-    const wanted = matchModel(`${item.title} ${item.make ?? ""} ${item.model ?? ""}`) ?? matchModel(text);
+    const wanted =
+      matchModel(`${item.title} ${item.make ?? ""} ${item.model ?? ""}`, source.languages) ??
+      matchModel(text, source.languages) ??
+      // AI may summarise the word for excavator away ("Hyundai R140W"), although the card passed this same check.
+      matchModel(cardText, source.languages);
     if (!wanted) continue;
     if (!withinLimits(item, limits)) continue;
-    if (item.location && NON_EUROPE.test(item.location)) continue;
+    const location = source.countryCodes ? expandCountryCode(item.location) : item.location;
+    if (isExcludedPlace(location)) continue;
 
     const url = normalizeUrl(item.url);
     const id = listingId(url);
     const prev = byId.get(id);
-    const sameLoc = prev && prev.location === item.location;
-    const coords = sameLoc && prev.lat != null ? { lat: prev.lat, lng: prev.lng! } : await geocode(item.location, cache);
+    const sameLoc = prev && prev.location === location;
+    const coords = sameLoc && prev.lat != null ? { lat: prev.lat, lng: prev.lng! } : await geocode(location, cache, source.defaultCountry);
     if (coords && !inEurope(coords)) continue;
 
     const listing: Listing = {
@@ -342,10 +298,10 @@ async function merge() {
       priceEur: item.priceEur,
       year: item.year,
       hours: item.hours,
-      location: item.location,
+      location,
       lat: coords?.lat ?? null,
       lng: coords?.lng ?? null,
-      imageUrl: item.imageUrl,
+      imageUrl: item.imageUrl ?? prev?.imageUrl ?? null,
       firstSeen: prev?.firstSeen ?? now,
       lastSeen: now,
       cardHash: hash,
@@ -369,8 +325,15 @@ async function merge() {
   // Recomputed for all rows, so stored listings the sites did not show this time are corrected too.
   const kept = [...byId.values()]
     .filter((l) => Date.parse(l.lastSeen) >= cutoff)
-    .map((l) => ({ ...l, wheeled: isWheeled([l.title, l.make, l.model, l.description, l.cardText].filter(Boolean).join(" ")) }));
+    .map((l) => ({
+      ...l,
+      wheeled: isWheeled([l.title, l.make, l.model, l.description, l.cardText].filter(Boolean).join(" "), l.title),
+      // Clears placeholders, logos and flags stored by earlier scrapes, also on ads the sites did not show this time.
+      imageUrl: l.imageUrl && isPhoto(l.imageUrl) ? l.imageUrl : null,
+    }));
   const listings = applyMarket(kept);
+  const duplicates = crossSiteDuplicates(listings);
+  console.log(`[scrape] on more than one site: ${duplicates.machines} machines, ${duplicates.extraAds} extra ads`);
   save("Checking machines priced well below similar ones…");
   const review = await checkFlagged(listings);
   console.log(
@@ -393,6 +356,9 @@ async function merge() {
   return listings.length;
 }
 
+/** Set by the web server so this run can be closed in the scrape_runs table. */
+const runId = Number(process.env.SCRAPE_RUN_ID) || null;
+
 async function main() {
   console.log(
     `[scrape] start — extractor: ${hasAi() ? "AI (hybrid: Gemini, Groq, free OpenRouter)" : "heuristic (no AI key)"}, models: ${WANTED.map((w) => w.label).join(", ")}`,
@@ -409,12 +375,14 @@ async function main() {
     status.finishedAt = new Date().toISOString();
     save(`Done: ${total} listings stored${failed ? ` (${failed} source(s) had errors)` : ""}.`);
     console.log(`[scrape] done — ${total} listings`);
+    if (runId) await finishRun(runId, { status: "done", listings: total, message: status.message });
   } catch (err) {
     status.running = false;
     status.finishedAt = new Date().toISOString();
     save(`Scrape failed: ${(err as Error).message}`);
     console.error(err);
     process.exitCode = 1;
+    if (runId) await finishRun(runId, { status: "failed", message: status.message });
   }
 }
 

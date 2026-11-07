@@ -1,6 +1,9 @@
 /**
  * What we look for and where we look. Edit this file to add models or sources.
+ * Words in other languages live in lib/languages, country names in lib/countries.ts.
  */
+import { withinBudget } from "./costs";
+import { DEFAULT_LANGUAGES, EXCAVATOR_WORD, TRACKED_WORD, WHEELED_WORD, exclusionsFor, type LangCode } from "./languages";
 
 export type WantedModel = {
   key: string;
@@ -8,7 +11,7 @@ export type WantedModel = {
   /** all of these must match the listing text (title + make + model) */
   make: RegExp;
   number: RegExp;
-  /** weak model patterns (plain "55", "R 140") also need the word Bagger/excavator in the text */
+  /** weak model patterns (plain "55", "R 140") also need a word for excavator in the text, in any language */
   needsBagger?: boolean;
 };
 
@@ -25,47 +28,57 @@ export const WANTED: WantedModel[] = [
   { key: "doosan-dx210", label: "Doosan DX210", make: /do{1,2}san|develon|daewoo/i, number: /dx\s*-?\s*210(?!\d)/i },
 ];
 
-/** Never an excavator for sale: tyres, rubber tracks, parts, rentals, wanted ads. */
-const HARD_EXCLUDE =
-  /reifen|räder\b|felge|gummiketten?|gummipads?|laufrolle|ersatzteil|zahnrad|kühler|hydraulikpumpe|anhänger|vermiet|mieten|miete\b|mietpreis|tagesmiete|mietmaschine|\/\s*tag\b|pro tag|zu miete|mietbagger|gesuch|suche\s|radlader|gabelstapler|stapler|generator|cnc|bearbeitungszentrum|drehmaschine|fräsmaschine|dreh- und fräs|landmaschine/i;
-/** Parts that name an engine/cab: only excluded when the text does not call the thing an excavator. */
-const SOFT_EXCLUDE = /motor\b|motoren|kabine|schlüssel|scheibe/i;
-
 /** Sizes the owner does not want (Hyundai/Doosan 150 and 170 class), even when the text also names a wanted one. */
 const UNWANTED_SIZE = /(?:robex|hx|hw|dx|w|(?<![a-z])r)\s*-?\s*(?:150|170)(?!\d)|(?<!\d)(?:150|170)\s*-?\s*w(?![a-z])/i;
 
-/** Ads that open by naming a part or attachment. Only the start counts: real machines often list "mit Schnellwechsler". */
-const PART_AD = /^\W*(?:hydraulisch\w*\s+)?(?:fahrantrieb|endantrieb|fahrmotor|schwenkmotor|schnellwechsler|(?:tief|grab\w*|sieb)?löffel|planierschild|bolzen|zylinder|lanturi)/i;
+/** The model an ad is for, or why it was turned down. */
+export type Decision = { model: WantedModel; reason: null } | { model: null; reason: string };
 
-export function matchModel(text: string): WantedModel | null {
-  if (PART_AD.test(text)) return null;
-  if (HARD_EXCLUDE.test(text)) return null;
-  if (UNWANTED_SIZE.test(text)) return null;
-  if (SOFT_EXCLUDE.test(text) && !/bagger|excavator/i.test(text)) return null;
-  for (const m of WANTED) {
-    if (m.make.test(text) && m.number.test(text) && (!m.needsBagger || /bagger|excavator/i.test(text))) return m;
-  }
-  return null;
-}
+const no = (reason: string): Decision => ({ model: null, reason });
 
 /**
- * Wheeled excavator (Mobilbagger): by the word or by a "W" model suffix (DX55W, R140W-9, Robex 55W).
- * Decided from the machine's own text only: wheeled search pages also list mini and crawler excavators.
+ * Decides on one ad. `languages` are those of the site it came from: they choose the exclusions.
+ * Word lists are in lib/languages; the order of the checks below matters and is covered by tests/languages.test.ts.
  */
-export function isWheeled(text: string): boolean {
-  return /mobilbagger|radbagger|mobile excavator|wheel(?:ed)? excavator|(?:dx|robex|hx|r|b|sv)\s*-?\s*\d{2,3}\s*-?\s*w(?![a-z])/i.test(text);
+export function classify(text: string, languages: LangCode[] = DEFAULT_LANGUAGES): Decision {
+  const words = exclusionsFor(languages);
+  const part = text.match(words.partAtStart);
+  if (part) return no(`opens with a part: "${part[0].trim()}"`);
+  const notForSale = text.match(words.notForSale);
+  if (notForSale) return no(`not for sale: "${notForSale[0]}"`);
+  if (UNWANTED_SIZE.test(text)) return no("unwanted size (150 or 170 class)");
+  const isExcavator = EXCAVATOR_WORD.test(text) || words.weakExcavator.test(text);
+  const soft = text.match(words.softExclude);
+  if (soft && !isExcavator) return no(`a part, not called an excavator: "${soft[0]}"`);
+  let weak: WantedModel | null = null;
+  for (const m of WANTED) {
+    if (!m.make.test(text) || !m.number.test(text)) continue;
+    if (!m.needsBagger || isExcavator) return { model: m, reason: null };
+    weak ??= m;
+  }
+  return no(weak ? `${weak.label} needs a word for excavator` : "no wanted make and model");
 }
 
-/** The search is Europe-wide (owner's request). Names as they appear on German-language marketplaces. */
-export const EUROPE =
-  /deutschland|germany|polen|poland|frankreich|france|niederlande|netherlands|belgien|luxemburg|österreich|schweiz|italien|spanien|portugal|tschechi|slowakei|ungarn|rumänien|bulgarien|slowenien|kroatien|serbien|bosnien|albanien|mazedonien|montenegro|kosovo|griechenland|litauen|lithuania|lettland|estland|finnland|schweden|norwegen|dänemark|großbritannien|vereinigtes königreich|irland|island|malta|zypern|ukraine|moldau/i;
+export function matchModel(text: string, languages: LangCode[] = DEFAULT_LANGUAGES): WantedModel | null {
+  return classify(text, languages).model;
+}
 
-/** Listings located here are skipped: outside Europe, plus Turkey, Russia and Belarus. */
-export const NON_EUROPE =
-  /china|indien|emirate|\busa\b|vereinigte staaten|kanada|japan|korea|türkei|russland|belarus|weißrussland|kasachstan|usbekistan|georgien|armenien|aserbaidschan|israel|saudi|katar|iran|irak|ägypten|marokko|südafrika|brasilien|australien/i;
+/** The "W" that marks a wheeled model (DX55W, R140W-9, Robex 55W), or Hyundai's HW range. Nothing to translate here. */
+const WHEELED_MODEL = /(?:dx|robex|hx|r|b|sv)\s*-?\s*\d{2,3}\s*-?\s*w(?![a-z])|(?<![a-z])hw\s*-?\s*\d{2,3}(?!\d)/i;
 
-/** Catches countries missing from the lists above, once a listing has coordinates. */
-export const inEurope = (c: { lat: number; lng: number }) => c.lat >= 34 && c.lat <= 72 && c.lng >= -25 && c.lng <= 45;
+/** LC and NLC mark crawlers: R140LC-9, DX140LCR. */
+const TRACKED_MODEL = /(?:dx|robex|hx|r)\s*-?\s*\d{2,3}\s*-?\s*n?lc/i;
+
+/**
+ * Wheeled excavator (Mobilbagger): by the word, in any language, or by the model name.
+ * Decided from the machine's own text only: wheeled search pages also list mini and crawler excavators.
+ * `title`, when given, has the last word: sellers file crawlers under "Mobilbagger", and that label is on the card.
+ */
+export function isWheeled(text: string, title?: string | null): boolean {
+  const says = (t: string) => WHEELED_WORD.test(t) || WHEELED_MODEL.test(t);
+  if (title && !says(title) && (TRACKED_WORD.test(title) || TRACKED_MODEL.test(title))) return false;
+  return says(text);
+}
 
 /** Cheap pre-filter so we only send plausible blocks to the AI. */
 export function looksRelevant(text: string): boolean {
@@ -98,9 +111,12 @@ export function scrapeLimits(): Limits {
   };
 }
 
-/** An unknown price or year is kept: many good ads say "Preis auf Anfrage" or leave the year out. */
+/**
+ * An unknown price or year is kept: many good ads say "Preis auf Anfrage" or leave the year out.
+ * The max price is a budget for what gets paid, so an asking price that negotiation could bring within it is kept too.
+ */
 export function withinLimits(item: { priceEur: number | null; year: number | null }, limits: Limits): boolean {
-  if (limits.maxPrice != null && item.priceEur != null && item.priceEur > limits.maxPrice) return false;
+  if (limits.maxPrice != null && item.priceEur != null && !withinBudget(item.priceEur, limits.maxPrice)) return false;
   if (limits.maxYear != null && item.year != null && item.year > limits.maxYear) return false;
   return true;
 }
@@ -133,6 +149,18 @@ export type Source = {
   urls: (mobileOnly: boolean) => string[];
   /** when set, only links passing this test can become listings (drops filter links, rentals and so on) */
   isListing?: (url: string) => boolean;
+  /** what the ads are written in: chooses the exclusions and field labels (see lib/languages) */
+  languages: LangCode[];
+  /** added to a place that names no country when finding it on the map; null when ads come from all over */
+  defaultCountry: string | null;
+  /** places end in an ISO country code ("Siegen, DE"), which is only safe to read on sites known to do this */
+  countryCodes?: boolean;
+  /** keep a space between a card's elements, which whole-word matching needs. Use this on every new source. */
+  spacedText?: boolean;
+  /** plain HTTP cannot read this site, so go straight to the browser */
+  browser?: boolean;
+  /** false: never send this site's text to AI models, for example when its robots.txt says ai-train=no */
+  ai?: boolean;
 };
 
 const plus = (q: string) => q.trim().replace(/\s+/g, "+");
@@ -214,6 +242,8 @@ export const SOURCES: Source[] = [
     id: "maschinensucher",
     name: "Maschinensucher",
     enabled: true,
+    languages: ["de"],
+    defaultCountry: "Deutschland",
     isListing: (url) => /\/i-\d+(?:\?|$)/.test(url),
     urls: (mobileOnly) => queriesFor(MASCHINENSUCHER_QUERIES, mobileOnly).map((q) => `https://www.maschinensucher.de/mss/${plus(q)}`),
   },
@@ -223,6 +253,8 @@ export const SOURCES: Source[] = [
     id: "truckscout24",
     name: "TruckScout24",
     enabled: true,
+    languages: ["de"],
+    defaultCountry: "Deutschland",
     isListing: (url) => /\/tsp\/ts-[\d-]+(?:\?|$)/.test(url),
     urls: (mobileOnly) => [
       // wheeled excavators first: that is the main focus
@@ -244,6 +276,8 @@ export const SOURCES: Source[] = [
     id: "kleinanzeigen",
     name: "Kleinanzeigen",
     enabled: true,
+    languages: ["de"],
+    defaultCountry: "Deutschland",
     // real ads only: not search links, seller profiles or the login page behind "save this search"
     isListing: (url) => /\/s-anzeige\/.+\/\d+-\d+-\d+(?:\?|$)/.test(url),
     urls: (mobileOnly) => [
@@ -259,14 +293,61 @@ export const SOURCES: Source[] = [
     id: "machineryline",
     name: "Machineryline",
     enabled: true,
+    languages: ["de"],
+    defaultCountry: "Deutschland",
     isListing: (url) => /\/-\/Verkauf\/(?:Mobilbagger|Minibagger|Midibagger|Kettenbagger|Bagger)\/.+--\d{10,}$/.test(url),
     urls: machinerylinePages,
   },
   {
-    // Not verified yet — enable and check the per-source result in the app header.
+    // The largest portal. Category pages per make; the German site lists machines from all countries, in EUR.
     id: "mascus",
     name: "Mascus",
-    enabled: false,
-    urls: (mobileOnly) => queriesFor(TEXT_QUERIES, mobileOnly).map((q) => `https://www.mascus.de/search?q=${plus(q)}`),
+    enabled: true,
+    languages: ["de", "en"],
+    defaultCountry: null,
+    countryCodes: true,
+    spacedText: true,
+    isListing: (url) => /mascus\.de\/baumaschinen\/[a-z-]+\/[^/]+\/[a-z0-9]{6,}\.html(?:\?|$)/.test(url),
+    // 40 ads per page. Pages per make fit the counts on 2026-11-07 (219, 191, 40, 67), plus one to allow for growth.
+    urls: () =>
+      Object.entries({ hyundai: 7, doosan: 6, develon: 2, yanmar: 3 }).flatMap(([make, pages]) =>
+        range(pages).map((n) => `https://www.mascus.de/baumaschinen/mobilbagger/${make}${n > 1 ? `?page=${n}` : ""}`),
+      ),
+  },
+  {
+    // robots.txt allows crawling but says ai-train=no, and free AI models may train on what they are sent: regex parser only.
+    id: "europe-construction-equipment",
+    name: "Europe-Construction-Equipment",
+    enabled: true,
+    languages: ["en"],
+    defaultCountry: null,
+    spacedText: true,
+    ai: false,
+    isListing: (url) => /europe-construction-equipment\.com\/.+\/ts-vi\d+\/used\.html(?:\?|$)/.test(url),
+    // About 20 ads per page. Pages per make fit the counts on 2026-11-07 (49, 47, 7, 14), plus room for growth.
+    urls: () =>
+      Object.entries({
+        "hyundai-wheel-excavator/~a2b1c3e355": 4,
+        "doosan-wheel-excavator/~a2b1c3e803": 4,
+        "develon-wheel-excavator/~a2b1c3e7872": 1,
+        "yanmar-wheel-excavator/~a2b1c3e788": 2,
+      }).flatMap(([path, pages]) =>
+        range(pages).map((n) => `https://www.europe-construction-equipment.com/${path}/used.html${n > 1 ? `?p=${n}` : ""}`),
+      ),
+  },
+  {
+    // Serves only a JavaScript cookie page to plain HTTP, so it goes straight to the browser.
+    id: "truck1",
+    name: "Truck1",
+    enabled: true,
+    languages: ["en"],
+    defaultCountry: null,
+    browser: true,
+    isListing: (url) => /truck1\.eu\/construction-machinery\/wheel-excavators\/.+-a\d{5,}\.html(?:\?|$)/.test(url),
+    // Up to 31 ads per page; robots.txt allows ?page=. Pages per make fit the counts on 2026-11-07 (112, 83, 7, 4), plus one.
+    urls: () =>
+      Object.entries({ hyundai: 5, doosan: 4, develon: 1, yanmar: 1 }).flatMap(([make, pages]) =>
+        range(pages).map((n) => `https://www.truck1.eu/construction-machinery/wheel-excavators/${make}${n > 1 ? `?page=${n}` : ""}`),
+      ),
   },
 ];
