@@ -48,12 +48,12 @@ export function matchModel(text: string): WantedModel | null {
   return null;
 }
 
-/** Wheeled excavator (Mobilbagger): by category page hint, by the word, or by a "W" model suffix (DX55W, R140W-9, Robex 55W). */
-export function isWheeled(text: string, hint = false): boolean {
-  return (
-    hint ||
-    /mobilbagger|radbagger|mobile excavator|wheel(?:ed)? excavator|(?:dx|robex|hx|r|b|sv)\s*-?\s*\d{2,3}\s*-?\s*w(?![a-z])/i.test(text)
-  );
+/**
+ * Wheeled excavator (Mobilbagger): by the word or by a "W" model suffix (DX55W, R140W-9, Robex 55W).
+ * Decided from the machine's own text only: wheeled search pages also list mini and crawler excavators.
+ */
+export function isWheeled(text: string): boolean {
+  return /mobilbagger|radbagger|mobile excavator|wheel(?:ed)? excavator|(?:dx|robex|hx|r|b|sv)\s*-?\s*\d{2,3}\s*-?\s*w(?![a-z])/i.test(text);
 }
 
 /** The search is Europe-wide (owner's request). Names as they appear on German-language marketplaces. */
@@ -110,7 +110,7 @@ export function withinLimits(item: { priceEur: number | null; year: number | nul
  * The price stays out of the URL on purpose: the site's price filter hides "Preis auf Anfrage" ads; run.ts applies it instead.
  * Page counts fit the default year limit; a later year (or none) has more results, so read further.
  */
-function machinerylinePages(): string[] {
+function machinerylinePages(mobileOnly: boolean): string[] {
   const { maxYear } = scrapeLimits();
   const scale = maxYear === DEFAULT_LIMITS.maxYear ? 1 : 3;
   const year = maxYear != null ? `ym=%3A${maxYear}&` : "";
@@ -120,7 +120,7 @@ function machinerylinePages(): string[] {
     ["Midibagger", "c5601", 2],
     ["Kettenbagger", "c167", 15],
   ];
-  return categories.flatMap(([name, id, pages]) =>
+  return categories.filter(([name]) => !mobileOnly || name === "Mobilbagger").flatMap(([name, id, pages]) =>
     range(pages * scale).map((n) => `https://machineryline.de/-/${name}--${id}?${year}mark_id=3881%3B2611%3B3015&page=${n}`),
   );
 }
@@ -130,7 +130,7 @@ export type Source = {
   name: string;
   enabled: boolean;
   /** search/listing page URLs to crawl for this source */
-  urls: () => string[];
+  urls: (mobileOnly: boolean) => string[];
   /** when set, only links passing this test can become listings (drops filter links, rentals and so on) */
   isListing?: (url: string) => boolean;
 };
@@ -204,6 +204,10 @@ const TEXT_QUERIES = [
   "radbagger hyundai",
 ];
 
+/** Searches aimed at wheeled machines: they name the type or end in the "W" of the model. */
+const isMobileQuery = (q: string) => /mobilbagger|radbagger|(?:\s|\d)w$/.test(q);
+const queriesFor = (queries: string[], mobileOnly: boolean) => (mobileOnly ? queries.filter(isMobileQuery) : queries);
+
 const TS24 = "https://www.truckscout24.de/baumaschinen/gebraucht";
 export const SOURCES: Source[] = [
   {
@@ -211,7 +215,7 @@ export const SOURCES: Source[] = [
     name: "Maschinensucher",
     enabled: true,
     isListing: (url) => /\/i-\d+(?:\?|$)/.test(url),
-    urls: () => MASCHINENSUCHER_QUERIES.map((q) => `https://www.maschinensucher.de/mss/${plus(q)}`),
+    urls: (mobileOnly) => queriesFor(MASCHINENSUCHER_QUERIES, mobileOnly).map((q) => `https://www.maschinensucher.de/mss/${plus(q)}`),
   },
   {
     // Category pages per make (verified URL pattern) with ?page=N pagination.
@@ -220,16 +224,20 @@ export const SOURCES: Source[] = [
     name: "TruckScout24",
     enabled: true,
     isListing: (url) => /\/tsp\/ts-[\d-]+(?:\?|$)/.test(url),
-    urls: () => [
+    urls: (mobileOnly) => [
       // wheeled excavators first: that is the main focus
       ...range(6).map((n) => `${TS24}/mobilbagger/doosan?page=${n}`),
       ...range(4).map((n) => `${TS24}/mobilbagger/hyundai?page=${n}`),
       ...range(3).map((n) => `${TS24}/mobilbagger/yanmar?page=${n}`),
-      ...range(2).map((n) => `${TS24}/minibagger/yanmar?page=${n}`),
-      ...range(4).map((n) => `${TS24}/minibagger/doosan?page=${n}`),
-      ...range(4).map((n) => `${TS24}/kettenbagger/doosan?page=${n}`),
-      ...range(3).map((n) => `${TS24}/minibagger/hyundai?page=${n}`),
-      ...range(3).map((n) => `${TS24}/kettenbagger/hyundai?page=${n}`),
+      ...(mobileOnly
+        ? []
+        : [
+            ...range(2).map((n) => `${TS24}/minibagger/yanmar?page=${n}`),
+            ...range(4).map((n) => `${TS24}/minibagger/doosan?page=${n}`),
+            ...range(4).map((n) => `${TS24}/kettenbagger/doosan?page=${n}`),
+            ...range(3).map((n) => `${TS24}/minibagger/hyundai?page=${n}`),
+            ...range(3).map((n) => `${TS24}/kettenbagger/hyundai?page=${n}`),
+          ]),
     ],
   },
   {
@@ -238,10 +246,10 @@ export const SOURCES: Source[] = [
     enabled: true,
     // real ads only: not search links, seller profiles or the login page behind "save this search"
     isListing: (url) => /\/s-anzeige\/.+\/\d+-\d+-\d+(?:\?|$)/.test(url),
-    urls: () => [
-      ...TEXT_QUERIES.map((q) => `https://www.kleinanzeigen.de/s-${dash(q)}/k0`),
+    urls: (mobileOnly) => [
+      ...queriesFor(TEXT_QUERIES, mobileOnly).map((q) => `https://www.kleinanzeigen.de/s-${dash(q)}/k0`),
       // second page for the broadest searches
-      ...["doosan dx 55", "doosan dx 140", "hyundai r 55", "hyundai r 140"].map(
+      ...(mobileOnly ? [] : ["doosan dx 55", "doosan dx 140", "hyundai r 55", "hyundai r 140"]).map(
         (q) => `https://www.kleinanzeigen.de/s-seite:2/${dash(q)}/k0`,
       ),
     ],
@@ -259,6 +267,6 @@ export const SOURCES: Source[] = [
     id: "mascus",
     name: "Mascus",
     enabled: false,
-    urls: () => TEXT_QUERIES.map((q) => `https://www.mascus.de/search?q=${plus(q)}`),
+    urls: (mobileOnly) => queriesFor(TEXT_QUERIES, mobileOnly).map((q) => `https://www.mascus.de/search?q=${plus(q)}`),
   },
 ];

@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
     "scrape": "tsx scraper/run.ts",
+    "market-report": "node --env-file=.env --import tsx scraper/market-report.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

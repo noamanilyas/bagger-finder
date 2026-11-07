@@ -1,3 +1,6 @@
+export type AdType = "sale" | "rental" | "parts" | "other";
+export type AiVerdict = "interesting" | "suspicious" | "not_comparable";
+
 export type Listing = {
   id: string;
   url: string;
@@ -20,6 +23,22 @@ export type Listing = {
   imageUrl: string | null;
   firstSeen: string;
   lastSeen: string;
+  /** fingerprint of the ad card: an unchanged card is not sent to AI again */
+  cardHash: string | null;
+  cardText: string | null;
+  /** set by AI; null means AI has not read this ad yet */
+  adType: AdType | null;
+  issues: string | null;
+  priceNote: string | null;
+  /** comparison with similar machines (see lib/market.ts); null when there are too few */
+  marketMedian: number | null;
+  marketCount: number | null;
+  belowPct: number | null;
+  flagged: boolean;
+  aiVerdict: AiVerdict | null;
+  aiReason: string | null;
+  aiModel: string | null;
+  aiCheckKey: string | null;
 };
 
 export type Db = {

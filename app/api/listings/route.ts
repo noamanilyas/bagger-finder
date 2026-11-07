@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readDb, readStatus } from "@/lib/store";
 import { isRunning } from "@/lib/trigger";
 import { hasSupabase, loadListings } from "@/lib/supabase";
+import { isSaleAd } from "@/lib/market";
 import { WANTED } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +20,8 @@ export async function GET() {
   const status = readStatus();
   return NextResponse.json({
     updatedAt: db.updatedAt,
-    listings,
+    // Rentals and parts stay stored, so AI does not read them again, but are not shown.
+    listings: listings.filter(isSaleAd),
     models: WANTED.map((m) => ({ key: m.key, label: m.label })),
     status: { ...status, running: isRunning() },
   });

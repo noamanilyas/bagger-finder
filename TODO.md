@@ -17,8 +17,6 @@
 - [ ] Possibly a Chrome extension (runs in the user's own browser) that collects listings and sends them to the app.
 
 **Related cleanup**
-- [ ] Remove the rule in `scraper/run.ts` that tags every listing from a `/mobilbagger/` URL as wheeled
-      (that page also contains crawlers); rely on the model name / the word "Mobilbagger" instead.
 - [ ] The `/mobilbagger/yanmar` and `/mobilbagger/hyundai` TruckScout24 URLs are unverified guesses.
 
 ## Other open items

@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DEFAULT_LIMITS } from "@/lib/config";
+import type { ScraperSettings } from "@/lib/settings";
 import type { Listing, Status } from "@/lib/types";
 
 const Map = dynamic(() => import("@/components/Map"), {
@@ -18,6 +19,7 @@ type Payload = {
 };
 
 const SORTS = {
+  interesting: "Most interesting",
   newest: "Newest first",
   priceAsc: "Price: low → high",
   priceDesc: "Price: high → low",
@@ -32,8 +34,17 @@ type SortKey = keyof typeof SORTS;
 const num = (a: number | null, b: number | null, dir: 1 | -1) =>
   a == null ? (b == null ? 0 : 1) : b == null ? -1 : (a - b) * dir;
 
+/** Interesting first, then not reviewed yet, then cheap but doubtful, then everything else. */
+function dealRank(l: Listing): number {
+  if (!l.flagged || l.aiVerdict === "not_comparable") return 3;
+  if (l.aiVerdict === "interesting") return 0;
+  return l.aiVerdict === "suspicious" ? 2 : 1;
+}
+
 function sorter(key: SortKey): (a: Listing, b: Listing) => number {
   switch (key) {
+    case "interesting":
+      return (a, b) => dealRank(a) - dealRank(b) || num(a.belowPct, b.belowPct, -1) || b.firstSeen.localeCompare(a.firstSeen);
     case "priceAsc": return (a, b) => num(a.priceEur, b.priceEur, 1);
     case "priceDesc": return (a, b) => num(a.priceEur, b.priceEur, -1);
     case "yearDesc": return (a, b) => num(a.year, b.year, -1);
@@ -52,10 +63,20 @@ const squash = (s: string) => s.toLowerCase().replace(/[\s-]/g, "");
 /** A filter box holds digits; empty means no limit. */
 const limitOf = (s: string) => parseInt(s, 10) || null;
 
+const DEAL_LABEL = {
+  interesting: "Interesting",
+  suspicious: "Cheap, but check carefully",
+  not_comparable: "",
+  unchecked: "Below market, not reviewed",
+};
+
+/** Well below similar machines, unless AI found the price is not comparable. */
+const isDeal = (l: Listing) => l.flagged && l.aiVerdict !== "not_comparable";
+
 export default function Home() {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sort, setSort] = useState<SortKey>("newest");
+  const [sort, setSort] = useState<SortKey>("interesting");
   const [models, setModels] = useState<Set<string>>(new Set());
   const [source, setSource] = useState("all");
   const [maxPrice, setMaxPrice] = useState(String(DEFAULT_LIMITS.maxPrice ?? ""));
@@ -64,6 +85,9 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [wheeledOnly, setWheeledOnly] = useState(true);
+  const [dealsOnly, setDealsOnly] = useState(false);
+  const [settings, setSettings] = useState<ScraperSettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -78,6 +102,29 @@ export default function Home() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    fetch("/api/settings", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error();
+        setSettings((await res.json()) as ScraperSettings);
+      })
+      .catch(() => setError("Could not load scraper settings."));
+  }, []);
+
+  const saveMobileOnly = async (mobileOnly: boolean) => {
+    const before = settings;
+    setSettings({ mobileOnly }); // a checkbox must respond at once; undone below if saving fails
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mobileOnly }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      setSettings(before);
+      setError("Could not save scraper settings.");
+    }
+  };
 
   const running = data?.status.running ?? false;
   useEffect(() => {
@@ -107,6 +154,7 @@ export default function Home() {
     return (data?.listings ?? [])
       .filter((l) => models.size === 0 || models.has(l.modelKey))
       .filter((l) => !wheeledOnly || l.wheeled)
+      .filter((l) => !dealsOnly || isDeal(l))
       .filter((l) => source === "all" || l.source === source)
       // an unknown price or year stays visible, same as in the scraper
       .filter((l) => max == null || l.priceEur == null || l.priceEur <= max)
@@ -114,7 +162,7 @@ export default function Home() {
       .filter((l) => !modelQ || squash(`${l.title} ${l.make ?? ""} ${l.model ?? ""}`).includes(modelQ))
       .filter((l) => !q || `${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
       .sort(sorter(sort));
-  }, [data, models, source, maxPrice, maxYear, modelText, query, sort, wheeledOnly]);
+  }, [data, models, source, maxPrice, maxYear, modelText, query, sort, wheeledOnly, dealsOnly]);
 
   const select = useCallback((id: string) => {
     setSelected(id);
@@ -145,12 +193,31 @@ export default function Home() {
             {data?.updatedAt && ` · updated ${new Date(data.updatedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`}
           </div>
         </div>
+        <div className="top-actions">
+        <button onClick={() => setSettingsOpen((v) => !v)} className="btn secondary" aria-expanded={settingsOpen}>
+          Scraper settings
+        </button>
         <button onClick={() => void refresh()} disabled={running} className="btn" title="Scrapes using the Max € and Max year set in the filters">
 
           {running ? "Scraping…" : "Refresh now"}
         </button>
+        </div>
       </header>
 
+      {settingsOpen && (
+        <div className="notice settings">
+          <label>
+            <input
+              type="checkbox"
+              checked={settings?.mobileOnly ?? false}
+              disabled={!settings}
+              onChange={(e) => void saveMobileOnly(e.target.checked)}
+            />{" "}
+            Only scrape Mobilbagger
+          </label>
+          <div className="sub">Used from the next scrape, including the hourly ones. Machines already stored stay until they expire.</div>
+        </div>
+      )}
       {data && running && (
         <div className="notice" role="status">
           <div>{data.status.message}</div>
@@ -177,6 +244,9 @@ export default function Home() {
             <div className="chips">
               <button className={`chip wheel${wheeledOnly ? " on" : ""}`} onClick={() => setWheeledOnly((v) => !v)}>
                 Mobilbagger only
+              </button>
+              <button className={`chip deal${dealsOnly ? " on" : ""}`} onClick={() => setDealsOnly((v) => !v)}>
+                Below market only
               </button>
               {(data?.models ?? []).map((m) => (
                 <button key={m.key} className={`chip${models.has(m.key) ? " on" : ""}`} onClick={() => toggleModel(m.key)}>
@@ -237,6 +307,7 @@ export default function Home() {
                     {l.wheeled && <span className="tag wheel">Mobilbagger</span>}
                     <span className="tag">{l.source}</span>
                     {l.lat == null && <span className="tag warn">no map location</span>}
+                    {isDeal(l) && <span className={`tag deal ${l.aiVerdict ?? "unchecked"}`}>{DEAL_LABEL[l.aiVerdict ?? "unchecked"]}</span>}
                   </div>
                   <div className="facts">
                     <strong>{l.priceEur != null ? eur(l.priceEur) : "Price on request"}</strong>
@@ -244,6 +315,12 @@ export default function Home() {
                     {l.hours != null && <span>{l.hours.toLocaleString("de-DE")} h</span>}
                     {l.location && <span>{l.location}</span>}
                   </div>
+                  {isDeal(l) && (
+                    <p className="deal-why">
+                      {l.belowPct}% below the median of {l.marketCount} similar machines in your range ({eur(l.marketMedian!)})
+                      {l.aiReason ? `. AI: ${l.aiReason}` : ""}
+                    </p>
+                  )}
                   {l.description && <p>{l.description}</p>}
                 </div>
               </li>

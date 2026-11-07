@@ -8,7 +8,7 @@ marketplaces and shows them on a map: list with sorting and filters on the left,
 | Part | Tech |
 | --- | --- |
 | Crawling | [Crawlee](https://crawlee.dev): plain HTTP + Cheerio first (cheap), headless Chromium via Playwright only for pages that come back empty or blocked; retries and rate limiting built in |
-| Extraction | Free [OpenRouter](https://openrouter.ai) models (`EXTRACT_MODELS` first, then currently available free models discovered live) turn listing cards into structured JSON; regex fallback without an API key |
+| Extraction | Gemini, Groq and free [OpenRouter](https://openrouter.ai) models in turn, each resting automatically when busy, turn listing cards into structured JSON; regex fallback when none is available |
 | Geocoding | OpenStreetMap Nominatim, cached on disk |
 | App | Next.js (App Router) + React + TypeScript, Leaflet map |
 

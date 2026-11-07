@@ -10,18 +10,23 @@
  */
 import { CheerioCrawler, PlaywrightCrawler } from "crawlee";
 import crypto from "node:crypto";
+import { applyMarket } from "../lib/market";
 import { NON_EUROPE, SOURCES, WANTED, inEurope, isWheeled, looksRelevant, matchModel, scrapeLimits, withinLimits } from "../lib/config";
-import { hasSupabase, deleteOlderThan, loadListings, saveListings } from "../lib/supabase";
+import { hasSupabase, deleteOlderThan, loadListings, recordHistory, saveListings } from "../lib/supabase";
+import { DEFAULT_SETTINGS, loadSettings } from "../lib/settings";
 import { readDb, readGeoCache, readStatus, writeDb, writeStatus } from "../lib/store";
 import type { Listing, SourceResult, Status } from "../lib/types";
 import { collectBlocksCheerio, withoutQuery } from "./cards";
-import { extract, hasAi, type Block, type Extracted } from "./extract";
+import { checkFlagged } from "./check";
+import { extract, hasAi, heuristicItem, type Block, type Extracted } from "./extract";
 import { geocode } from "./geocode";
 
 const MAX_CARDS_PER_PAGE = 60;
 const SAME_SITE_DELAY_SECS = 3;
 const KEEP_DAYS = 14;
 const FORCE_BROWSER = process.env.USE_BROWSER === "true";
+/** Free models are limited: ads over this budget use the regex parser and get AI on a later scrape. */
+const MAX_AI_CARDS_PER_RUN = 100;
 
 const status: Status = {
   ...readStatus(),
@@ -39,7 +44,13 @@ const save = (message?: string) => {
   writeStatus({ ...status, lastActivity: new Date().toISOString() });
 };
 
-const collected: { source: string; sourceName: string; item: Extracted; wheeledHint: boolean }[] = [];
+const collected: { source: string; sourceName: string; item: Extracted; cardHash: string; cardText: string }[] = [];
+
+/** Listings stored by earlier scrapes: ads that did not change are not sent to AI again. */
+let known = new Map<string, Listing>();
+let settings = DEFAULT_SETTINGS;
+const seenThisRun = new Set<string>();
+const counts = { cards: 0, reused: 0, sentToAi: 0 };
 
 type Job = { url: string; source: string };
 
@@ -69,6 +80,32 @@ function normalizeUrl(u: string): string {
   }
 }
 
+const listingId = (url: string) => crypto.createHash("sha1").update(normalizeUrl(url)).digest("hex").slice(0, 16);
+
+/** Fingerprint of a card. Ignores "Heute, 12:30" style dates, which change without the ad changing. */
+const cardHash = (text: string) =>
+  crypto
+    .createHash("sha1")
+    .update(text.replace(/(?:Heute|Gestern),?\s*(?:\d{1,2}:\d{2})?/g, "").replace(/\s+/g, " ").trim().toLowerCase())
+    .digest("hex")
+    .slice(0, 16);
+
+const fromKnown = (l: Listing, b: Block): Extracted => ({
+  url: b.href,
+  title: l.title,
+  description: l.description,
+  make: l.make,
+  model: l.model,
+  priceEur: l.priceEur,
+  year: l.year,
+  hours: l.hours,
+  location: l.location,
+  imageUrl: b.img ?? l.imageUrl,
+  adType: l.adType,
+  issues: l.issues,
+  priceNote: l.priceNote,
+});
+
 /** Filters cards, runs extraction and stores the result. Returns the number of relevant cards. */
 async function processBlocks(job: Job, blocks: Block[], info: (m: string) => void, countEmpty: boolean): Promise<number> {
   const source = SOURCES.find((s) => s.id === job.source)!;
@@ -83,12 +120,42 @@ async function processBlocks(job: Job, blocks: Block[], info: (m: string) => voi
   }
   console.log(`[sample] ${source.name}: ${JSON.stringify(relevant.slice(0, 2).map((b) => b.text.slice(0, 320)))}`);
   save(`${source.name}: reading ${relevant.length} ads…`);
-  const { items, via } = await extract(relevant, source.name);
-  status.extractor = via;
+
+  // Only ads that can end up in the list and are new or changed go to AI.
+  const limits = scrapeLimits();
+  const items: Extracted[] = [];
+  const forAi: Block[] = [];
+  const byHref = new Map(relevant.map((b) => [b.href, b]));
+  let aiLeft = MAX_AI_CARDS_PER_RUN - counts.sentToAi;
+  for (const b of relevant) {
+    const parsed = heuristicItem(b);
+    if (!(matchModel(parsed.title) ?? matchModel(b.text)) || !withinLimits(parsed, limits)) continue;
+    if (settings.mobileOnly && !isWheeled(`${parsed.title} ${b.text}`)) continue;
+    const id = listingId(b.href);
+    if (seenThisRun.has(id)) continue;
+    seenThisRun.add(id);
+    counts.cards++;
+    const prev = known.get(id);
+    if (prev && prev.adType && prev.cardHash === cardHash(b.text)) {
+      items.push(fromKnown(prev, b));
+      counts.reused++;
+    } else if (hasAi() && aiLeft > 0) {
+      forAi.push(b);
+      aiLeft--;
+    } else {
+      items.push(parsed);
+    }
+  }
+  counts.sentToAi += forAi.length;
+  const { items: extracted, via } = await extract(forAi, source.name);
+  items.push(...extracted);
+  if (forAi.length > 0) status.extractor = via;
   stat.pages += 1;
   stat.found += items.length;
-  const wheeledHint = /\/mobilbagger\//.test(job.url); // TruckScout24 wheeled-excavator category page
-  for (const item of items) collected.push({ source: job.source, sourceName: source.name, item, wheeledHint });
+  for (const item of items) {
+    const text = byHref.get(item.url)?.text ?? "";
+    collected.push({ source: job.source, sourceName: source.name, item, cardHash: cardHash(text), cardText: text });
+  }
   info(`${source.name}: ${blocks.length} links, ${relevant.length} relevant, ${items.length} listings via ${via} (${job.url})`);
   return relevant.length;
 }
@@ -99,7 +166,7 @@ async function crawl() {
   const jobs: Job[] = [];
   const seen = new Set<string>();
   for (const s of SOURCES.filter((x) => x.enabled)) {
-    for (const url of s.urls()) {
+    for (const url of s.urls(settings.mobileOnly)) {
       if (seen.has(url)) continue;
       seen.add(url);
       jobs.push({ url, source: s.id });
@@ -241,13 +308,12 @@ async function crawl() {
 async function merge() {
   save("Matching models and geocoding…");
   const now = new Date().toISOString();
-  const existing = hasSupabase() ? await loadListings() : readDb().listings;
-  const byId = new Map(existing.map((l) => [l.id, l]));
+  const byId = new Map(known);
   const cache = readGeoCache();
   const limits = scrapeLimits();
   console.log(`[scrape] limits: max price ${limits.maxPrice ?? "none"}, max year ${limits.maxYear ?? "none"}`);
 
-  for (const [i, { sourceName, item, wheeledHint }] of collected.entries()) {
+  for (const [i, { sourceName, item, cardHash: hash, cardText }] of collected.entries()) {
     if (i % 25 === 0) save(`Matching models and finding map locations: ${i + 1} of ${collected.length} ads…`);
     const text = [item.title, item.make, item.model, item.description].filter(Boolean).join(" ");
     const wanted = matchModel(`${item.title} ${item.make ?? ""} ${item.model ?? ""}`) ?? matchModel(text);
@@ -256,7 +322,7 @@ async function merge() {
     if (item.location && NON_EUROPE.test(item.location)) continue;
 
     const url = normalizeUrl(item.url);
-    const id = crypto.createHash("sha1").update(url).digest("hex").slice(0, 16);
+    const id = listingId(url);
     const prev = byId.get(id);
     const sameLoc = prev && prev.location === item.location;
     const coords = sameLoc && prev.lat != null ? { lat: prev.lat, lng: prev.lng! } : await geocode(item.location, cache);
@@ -272,7 +338,7 @@ async function merge() {
       model: item.model,
       modelKey: wanted.key,
       modelLabel: wanted.label,
-      wheeled: isWheeled(`${item.title} ${item.make ?? ""} ${item.model ?? ""} ${item.description ?? ""}`, wheeledHint),
+      wheeled: false, // set below for every stored listing
       priceEur: item.priceEur,
       year: item.year,
       hours: item.hours,
@@ -282,16 +348,46 @@ async function merge() {
       imageUrl: item.imageUrl,
       firstSeen: prev?.firstSeen ?? now,
       lastSeen: now,
+      cardHash: hash,
+      cardText,
+      adType: item.adType,
+      issues: item.issues,
+      priceNote: item.priceNote,
+      marketMedian: null, // set by applyMarket below
+      marketCount: null,
+      belowPct: null,
+      flagged: false,
+      aiVerdict: prev?.aiVerdict ?? null,
+      aiReason: prev?.aiReason ?? null,
+      aiModel: prev?.aiModel ?? null,
+      aiCheckKey: prev?.aiCheckKey ?? null,
     };
     byId.set(id, listing);
   }
 
   const cutoff = Date.now() - KEEP_DAYS * 86_400_000;
-  const listings = [...byId.values()].filter((l) => Date.parse(l.lastSeen) >= cutoff);
+  // Recomputed for all rows, so stored listings the sites did not show this time are corrected too.
+  const kept = [...byId.values()]
+    .filter((l) => Date.parse(l.lastSeen) >= cutoff)
+    .map((l) => ({ ...l, wheeled: isWheeled([l.title, l.make, l.model, l.description, l.cardText].filter(Boolean).join(" ")) }));
+  const listings = applyMarket(kept);
+  save("Checking machines priced well below similar ones…");
+  const review = await checkFlagged(listings);
+  console.log(
+    `[scrape] AI use: ${counts.cards} matching ads, ${counts.reused} unchanged, ${counts.sentToAi} sent to AI; ` +
+      `${review.flagged} flagged, ${review.checked} reviewed, ${review.failed} review failures, ${review.waiting} waiting`,
+  );
   save(`Saving ${listings.length} listings…`);
   if (hasSupabase()) {
     await saveListings(listings);
     await deleteOlderThan(new Date(cutoff).toISOString());
+    // A history problem must not fail the scrape: unrecorded changes are picked up on the next one.
+    try {
+      const h = await recordHistory(listings, now);
+      console.log(`[scrape] history: ${h.added} rows added, ${h.touched} unchanged, ${h.removed} non-sale removed`);
+    } catch (err) {
+      console.warn(`[scrape] history not recorded: ${(err as Error).message}`);
+    }
   }
   writeDb({ updatedAt: now, listings }); // local copy / fallback
   return listings.length;
@@ -299,10 +395,13 @@ async function merge() {
 
 async function main() {
   console.log(
-    `[scrape] start — extractor: ${hasAi() ? "OpenRouter free models" : "heuristic (no OPENROUTER_API_KEY)"}, models: ${WANTED.map((w) => w.label).join(", ")}`,
+    `[scrape] start — extractor: ${hasAi() ? "AI (hybrid: Gemini, Groq, free OpenRouter)" : "heuristic (no AI key)"}, models: ${WANTED.map((w) => w.label).join(", ")}`,
   );
   save("Crawling…");
   try {
+    settings = await loadSettings();
+    console.log(`[scrape] settings: ${settings.mobileOnly ? "Mobilbagger only" : "all excavator types"}`);
+    known = new Map((hasSupabase() ? await loadListings() : readDb().listings).map((l) => [l.id, l]));
     await crawl();
     const total = await merge();
     const failed = Object.values(status.sources).filter((s) => !s.ok).length;
