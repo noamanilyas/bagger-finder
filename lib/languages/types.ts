@@ -25,6 +25,12 @@ export type Language = {
   wheeled: Term[];
   /** words that say it runs on tracks: when an ad's title says so, a "wheeled" category label elsewhere is wrong */
   tracked: Term[];
+  /** motor grader: needed for models with a plain number, like the Cat 140 */
+  grader: Term[];
+  /** wheel loader. Also an exclusion on sources in this language: it turns down every wanted model that is not a loader */
+  loader: Term[];
+  /** road roller or soil compactor */
+  roller: Term[];
 
   // ---- active only on sources that declare this language: one language's exclusion is another's real machine
   /** an excavator word too ordinary to trust elsewhere: French "pelle" is leather in Italian and a name in Sweden */

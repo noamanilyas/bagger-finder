@@ -13,3 +13,14 @@ services:
         value: google/gemma-4-31b-it:free # tried first; other free models are discovered automatically
       - key: AUTO_SCRAPE
         value: "true"
+      # Sign-in: set these in the Render dashboard. Without WORKOS_CLIENT_ID the site refuses every request.
+      - key: WORKOS_CLIENT_ID
+        sync: false
+      - key: WORKOS_API_KEY
+        sync: false
+      - key: WORKOS_COOKIE_PASSWORD
+        sync: false
+      - key: NEXT_PUBLIC_WORKOS_REDIRECT_URI
+        sync: false # https://<your Render address>/callback
+      - key: ALLOWED_EMAILS
+        sync: false

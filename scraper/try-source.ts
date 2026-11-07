@@ -110,7 +110,7 @@ async function main() {
         if (showAll) console.log(`  no   ${decision.reason} | ${b.text.slice(0, 110)}`);
         continue;
       }
-      const inLimits = withinLimits(item, limits);
+      const inLimits = withinLimits(item, limits, decision.model);
       const wheeled = isWheeled(`${item.title} ${b.text}`, item.title);
       const place = source!.countryCodes ? expandCountryCode(item.location) : item.location;
       const excluded = isExcludedPlace(place);

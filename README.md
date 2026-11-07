@@ -1,7 +1,18 @@
 # Bagger Finder
 
-Finds used excavators across Europe — **Yanmar 55 (including the wheeled B55W), Doosan DX55, Doosan DX140, Hyundai 140, Hyundai 55** — on several
-marketplaces and shows them on a map: list with sorting and filters on the left, map on the right.
+Finds used construction machines across Europe on several marketplaces:
+
+- **Doosan / Daewoo / Develon:** DX55, DX57, DX60, DX140, DX160, DX170, DX190, DX210, DX225, DX300, DH130, Solar 55, 80, 130, 140, 170, 225, 300
+- **Hyundai:** Robex 55, 130W, 140
+- **Yanmar:** 55, including the wheeled B55W
+- **Volvo:** EW170
+- **Hitachi:** EX60, EX100, EX120, EX160WD
+- **JCB:** JS140, JS145, only up to €20,000
+- **Samsung:** MX6W, MX132W, 130W, only built 1990 to 2000
+- **Caterpillar:** graders 120, 130, 140; wheel loaders 966F, 966G, 970F, 972G, 972H, 980G, 980H (sellers rarely write the "II", so both spellings count)
+- **Dynapac:** rollers, including the CA2510
+
+The list lives in `lib/config.ts`. Results are shown on a map: list with sorting and filters on the left, map on the right.
 
 ## How it works
 
@@ -51,8 +62,14 @@ npm run knowledge -- add --model yanmar-55 --listing 5ff75a5f81d74768 --note "Se
 npm run knowledge -- remove 3
 ```
 
-On a public server, set `APP_PASSWORD`. The browser then asks for it once (any user name), for the whole site except
-`/api/health`, which is for the health check. Without it, production refuses to change comments.
+### Sign-in
+
+The whole site except `/api/health` (for the health check) needs a WorkOS sign-in with a verified address on
+`ALLOWED_EMAILS`. Set the `WORKOS_*` variables, `NEXT_PUBLIC_WORKOS_REDIRECT_URI` and `ALLOWED_EMAILS` from
+`.env.example`. In the WorkOS dashboard, under Redirects, add `<site>/callback` as a redirect URI, `<site>/sign-in` as the
+initiate login URI and `<site>` as the sign-out redirect.
+
+Without `WORKOS_CLIENT_ID` the site is open for local use, and production refuses every request.
 
 ### Add a marketplace
 

@@ -6,9 +6,12 @@ export const en: Language = {
   excavator: [/excavator/, "digger*"],
   wheeled: [/mobile excavator|wheel(?:ed)? excavator/, "wheeled digger*"],
   tracked: ["crawler excavator*", "tracked excavator*"],
+  grader: ["*grader*"],
+  loader: ["wheel loader*"],
+  roller: ["*roller*", "*compactor*"],
   // Not "rental" or "parts": dealers are called "XYZ Rental" and machines come "with spare parts".
   // Not "per month": sale ads quote leasing rates.
-  notForSale: ["for rent", "for hire", "hire only", "per day", "per week", "wanted", "wheel loader*", "forklift*"],
+  notForSale: ["for rent", "for hire", "hire only", "per day", "per week", "wanted", "forklift*"],
   partAtStart: ["spare part*", "parts for", "tyre*", "tire*", "rim*", "track*", "bucket*", "engine*", "hydraulic pump*", "quick coupler*", "cylinder*"],
   labels: { year: ["year", "year of manufacture", "manufacture year"], hours: ["hours", "hrs", "operating hours", "engine hours"] },
   searchWords: ["wheeled excavator", "wheel excavator"],

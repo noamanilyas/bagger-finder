@@ -5,11 +5,8 @@ import { addKnowledge, removeKnowledge } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
-/** Notes reach the AI and every viewer, so a public server must have a password (see middleware.ts). */
+/** Who may change notes is settled by sign-in (see middleware.ts). */
 function refused(req: Request): NextResponse | null {
-  if (process.env.NODE_ENV === "production" && !process.env.APP_PASSWORD) {
-    return NextResponse.json({ error: "Notes are switched off until APP_PASSWORD is set on the server" }, { status: 403 });
-  }
   // A form on another website cannot send this type without the browser asking first.
   if (req.method === "POST" && !req.headers.get("content-type")?.startsWith("application/json")) {
     return NextResponse.json({ error: "Send JSON" }, { status: 415 });

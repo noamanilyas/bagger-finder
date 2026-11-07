@@ -110,6 +110,13 @@ export async function saveListings(listings: Listing[]): Promise<void> {
   }
 }
 
+export async function deleteListings(ids: string[]): Promise<void> {
+  const sb = getSupabase();
+  if (!sb || ids.length === 0) return;
+  const { error } = await sb.from("listings").delete().in("id", ids);
+  if (error) throw new Error(`Supabase delete failed: ${error.message}`);
+}
+
 export async function deleteOlderThan(cutoffIso: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;

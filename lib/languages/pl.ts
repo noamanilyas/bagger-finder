@@ -6,8 +6,11 @@ export const pl: Language = {
   excavator: ["kopark*"],
   wheeled: ["kopark* kołow*", "kopark* na kołach"],
   tracked: ["kopark* gąsienicow*"],
+  grader: ["równiark*"],
+  loader: ["ładowark* kołow*"],
+  roller: ["walec", "walce", "walca"],
   // Not plain "wynajem": dealers advertise "sprzedaż i wynajem" on machines they are selling.
-  notForSale: ["na wynajem", "do wynajęcia", "wynajmę", "wynajem kopark*", "wypożyczę", "kupię", "poszukuję", "szukam", "ładowark* kołow*", "wózek widłowy"],
+  notForSale: ["na wynajem", "do wynajęcia", "wynajmę", "wynajem kopark*", "wypożyczę", "kupię", "poszukuję", "szukam", "wózek widłowy"],
   partAtStart: ["części", "część", "opon*", "koła", "koło", "gąsienic*", "łyżk*", "silnik*", "pomp*", "szybkozłącz*", "siłownik*", "lemiesz*"],
   labels: { year: ["rok produkcji", "rocznik"], hours: ["motogodzin*", "mtg", "mth", "godzin*"] },
   searchWords: ["koparka kołowa"],

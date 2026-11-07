@@ -7,7 +7,10 @@ export const ro: Language = {
   // Both comma-below (ț) and the older cedilla (ţ) spellings are in use; loose matching also accepts plain "t".
   wheeled: ["excavator* pe roți", "excavator* pe roţi", "excavator* pe pneuri"],
   tracked: ["excavator* pe șenil*", "excavator* pe şenil*"],
-  notForSale: ["închiriez", "închiriere", "de închiriat", "cumpăr", "caut", "încărcător frontal", "stivuitor*"],
+  grader: ["*greder*"],
+  loader: ["încărcător frontal"],
+  roller: ["compactor*"],
+  notForSale: ["închiriez", "închiriere", "de închiriat", "cumpăr", "caut", "stivuitor*"],
   partAtStart: ["piese", "piesă", "anvelop*", "jante", "șenil*", "cupă", "motor*", "pompă", "cilindru", "lanțuri"],
   labels: { year: ["an fabricație", "anul fabricației", "an de fabricație"], hours: ["ore"] },
   searchWords: ["excavator pe roți"],

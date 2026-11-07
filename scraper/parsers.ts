@@ -93,13 +93,14 @@ export function parseEce(text: string): SiteCard | null {
 
 /**
  * Truck1: "See all photos (5) NEW AD TOP Hyundai HW170ACR Wheel excavator 2023 460 h Germany, Zusmarshausen Published: 17hr 139 000EUR Price excl. VAT ≈ 156 067 USD Seller GmbH 7 Contact the seller"
- * Year, hours and the published date can each be missing; "Ask for price" stands in for a price.
+ * Year, hours and the published date can each be missing; "Ask for price" stands in for a price. Other categories have their own type there.
  */
 export function parseTruck1(text: string): SiteCard | null {
   const body = text.replace(/^See all photos \(\d+\)\s*/i, "").replace(/^(?:(?:NEW AD|TOP|SOLD)\s+)+/i, "");
-  const type = body.match(/\bWheel excavator\b/i);
+  // The last one: a seller's own title can name the type as well ("JCB JS 145LC crawler excavator Crawler excavator 2016").
+  const type = [...body.matchAll(/\b(?:Wheel excavator|Crawler excavator|Mini excavator|Excavator|Wheel loader|Grader|Road roller|Roller)\b/gi)].at(-1);
   if (!type) return null;
-  const end = type.index! + type[0].length;
+  const end = type.index + type[0].length;
   const after = body.slice(end);
 
   const year = after.match(/^\s*((?:19|20)\d{2})\b/);

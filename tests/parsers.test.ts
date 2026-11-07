@@ -185,3 +185,22 @@ describe("general parser", () => {
     assert.equal(item.priceEur, null, "a price in złoty must not become a price in euros");
   });
 });
+
+describe("cards of machines that are not wheeled excavators", () => {
+  it("Truck1 reads other categories, and the site's own type label over the seller's words", () => {
+    const grader = parseTruck1("See all photos (20) Caterpillar 140K . Grader 2012 2618 h Net weight: 17300 kg 191 hp Germany, Goch Ask for price MACHINEHANDEL LAMERS B.V. 2 Contact the seller");
+    assert.equal(grader?.year, 2012);
+    assert.equal(grader?.hours, 2618);
+    assert.equal(grader?.location, "Goch, Germany");
+    const crawler = parseTruck1("See all photos (28) JCB JS 145LC crawler excavator Crawler excavator 2016 Germany, Essen 30 000EUR Seller Contact the seller");
+    assert.equal(crawler?.title, "JCB JS 145LC crawler excavator Crawler excavator");
+    assert.equal(crawler?.priceEur, 30000);
+  });
+  it("a Caterpillar model ending in H is not operating hours", () => {
+    const source = { id: "machineryline", languages: ["de" as const] };
+    const item = (text: string) => heuristicItem({ href: "https://example.com/1", text, img: null }, source);
+    assert.equal(item("Caterpillar 140H Grader 17 Caterpillar 140H 84.980 € Grader 2008").hours, null);
+    assert.equal(item("Caterpillar 980H Radlader 82.500 € 2010 12.400 h").hours, 12400);
+    assert.equal(item("Doosan DX140W Mobilbagger 45.000 € 2012 900h").hours, 900);
+  });
+});

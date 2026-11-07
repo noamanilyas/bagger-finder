@@ -43,6 +43,9 @@ export type Listing = {
   knowledge?: { id: number; note: string; interesting: boolean; thisAdOnly: boolean }[];
 };
 
+/** The short id shown on cards and map popups, to name one listing. Unique in practice, and the search box finds it. */
+export const shortId = (id: string) => id.slice(0, 8);
+
 export type Db = {
   updatedAt: string | null;
   listings: Listing[];

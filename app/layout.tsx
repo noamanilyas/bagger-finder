@@ -4,7 +4,7 @@ import "./redesign.css";
 
 export const metadata: Metadata = {
   title: "Bagger Finder",
-  description: "Used Yanmar, Doosan and Hyundai excavators across Europe on one map",
+  description: "Used excavators, wheel loaders, graders and rollers across Europe on one map",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

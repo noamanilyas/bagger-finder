@@ -5,7 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { costPanel, negotiatedText, type PkrRate } from "@/lib/costs";
 import { isSaleAd } from "@/lib/market";
-import type { Listing } from "@/lib/types";
+import { shortId, type Listing } from "@/lib/types";
 
 type Props = {
   listings: Listing[];
@@ -14,6 +14,8 @@ type Props = {
   pkrRate: PkrRate | null;
   /** opens the comment / mark-interesting dialog for a listing */
   onMark?: (id: string) => void;
+  /** opens the machine's photo in the big view */
+  onPhoto?: (id: string) => void;
 };
 
 const fmtPrice = (p: number | null) => (p == null ? "?" : p >= 1000 ? `${Math.round(p / 1000)}k` : String(p));
@@ -48,9 +50,25 @@ const STAR = (filled: boolean) =>
 
 const euro = (n: number) => `€${n.toLocaleString("de-DE")}`;
 
-function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => void): HTMLElement {
+function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => void, onPhoto?: (id: string) => void): HTMLElement {
   const p = costPanel(l.priceEur, rate, isSaleAd(l));
   const root = element("div", "popup");
+
+  if (l.imageUrl) {
+    const photo = document.createElement("button");
+    photo.type = "button";
+    photo.className = "popup-photo";
+    photo.setAttribute("aria-label", `View photo of ${l.title}`);
+    const img = document.createElement("img");
+    img.alt = "";
+    img.referrerPolicy = "no-referrer";
+    img.src = l.imageUrl;
+    // a photo the site no longer serves should leave no empty box
+    img.addEventListener("error", () => photo.remove());
+    photo.append(img);
+    photo.addEventListener("click", () => onPhoto?.(l.id));
+    root.append(photo);
+  }
 
   const title = document.createElement("a");
   title.className = "popup-title";
@@ -61,7 +79,7 @@ function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => voi
   const meta = element(
     "div",
     "popup-meta",
-    [l.modelLabel, l.year, l.hours != null ? `${l.hours.toLocaleString("de-DE")} h` : null, l.location].filter(Boolean).join(" · "),
+    [`#${shortId(l.id)}`, l.modelLabel, l.year, l.hours != null ? `${l.hours.toLocaleString("de-DE")} h` : null, l.location].filter(Boolean).join(" · "),
   );
 
   const here = element("div", "popup-box");
@@ -101,7 +119,7 @@ function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => voi
   return root;
 }
 
-export default function Map({ listings, selectedId, onSelect, pkrRate, onMark }: Props) {
+export default function Map({ listings, selectedId, onSelect, pkrRate, onMark, onPhoto }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
@@ -110,6 +128,8 @@ export default function Map({ listings, selectedId, onSelect, pkrRate, onMark }:
   onSelectRef.current = onSelect;
   const onMarkRef = useRef(onMark);
   onMarkRef.current = onMark;
+  const onPhotoRef = useRef(onPhoto);
+  onPhotoRef.current = onPhoto;
   // read when a popup opens, so a rate arriving later does not rebuild the markers and move the map
   const pkrRateRef = useRef(pkrRate);
   pkrRateRef.current = pkrRate;
@@ -142,7 +162,7 @@ export default function Map({ listings, selectedId, onSelect, pkrRate, onMark }:
       if (l.lat == null || l.lng == null) continue;
       const pos: L.LatLngTuple = [jitter(l.id, l.lat), jitter(l.id + "x", l.lng)];
       const marker = L.marker(pos, { icon: iconFor(l, false) })
-        .bindPopup(() => popupFor(l, pkrRateRef.current, onMarkRef.current && ((id) => onMarkRef.current?.(id))), { minWidth: 320, maxWidth: 360 })
+        .bindPopup(() => popupFor(l, pkrRateRef.current, onMarkRef.current && ((id) => onMarkRef.current?.(id)), (id) => onPhotoRef.current?.(id)), { minWidth: 320, maxWidth: 360 })
         .on("click", () => onSelectRef.current(l.id));
       marker.addTo(group);
       markers.current.set(l.id, { marker, listing: l });
@@ -156,8 +176,22 @@ export default function Map({ listings, selectedId, onSelect, pkrRate, onMark }:
     markers.current.forEach(({ marker, listing }, id) => marker.setIcon(iconFor(listing, id === selectedId)));
     const hit = selectedId ? markers.current.get(selectedId) : null;
     if (hit && map.current) {
-      map.current.flyTo(hit.marker.getLatLng(), Math.max(map.current.getZoom(), 9), { duration: 0.6 });
+      const m = map.current;
+      // The flight cancels the pan that fits an opening popup on the map, so fit it once the flight ends.
+      // The flight centers the pin, so only the top of the popup can stick out.
+      const fitPopup = () => {
+        const popup = hit.marker.getPopup()?.getElement();
+        if (!popup) return;
+        const overlap = popup.getBoundingClientRect().top - m.getContainer().getBoundingClientRect().top - 10;
+        if (overlap < 0) m.panBy([0, overlap]);
+      };
+      // Open first: opening during the flight would end it early. Listen last: starting the flight ends any earlier move.
       hit.marker.openPopup();
+      m.flyTo(hit.marker.getLatLng(), Math.max(m.getZoom(), 9), { duration: 0.6 });
+      m.once("moveend", fitPopup);
+      return () => {
+        m.off("moveend", fitPopup);
+      };
     }
   }, [selectedId]);
 

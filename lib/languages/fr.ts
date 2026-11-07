@@ -6,9 +6,12 @@ export const fr: Language = {
   excavator: ["pelleteuse*", "minipelle*", "mini pelle*", "excavatrice*"],
   wheeled: ["pelle* sur pneu*", "pelle* à pneu*", "pelle* pneu*", "pelle* mobile*", "pelleteuse* sur pneu*"],
   tracked: ["pelle* sur chenille*", "pelle* à chenille*", "pelle* chenille*"],
+  grader: ["niveleuse*"],
+  loader: ["chargeuse*"],
+  roller: ["rouleau*", "compacteur*"],
   weakExcavator: ["pelle", "pelles"],
   // Never plain "location" anywhere in an ad: it means rental here, but cards also say "Location: Germany".
-  notForSale: ["à louer", "en location", "louer", "par jour", "je recherche", "cherche", "chargeuse*", "chariot élévateur*"],
+  notForSale: ["à louer", "en location", "louer", "par jour", "je recherche", "cherche", "chariot élévateur*"],
   // "pneu" at the start is a tyre ad; "pelle sur pneus" further on is the machine we want.
   partAtStart: ["location", "pneu*", "jante*", "chenille*", "godet*", "moteur*", "pièce*", "vérin*", "attache rapide", "pompe hydraulique"],
   labels: { year: ["année", "annee"], hours: ["heures", "heure"] },

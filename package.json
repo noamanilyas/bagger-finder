@@ -2,7 +2,7 @@
   "name": "bagger-finder",
   "version": "0.1.0",
   "private": true,
-  "description": "Finds used excavators (Yanmar / Doosan / Hyundai) on German marketplaces and shows them on a map.",
+  "description": "Finds used excavators, wheel loaders, graders and rollers on European marketplaces and shows them on a map.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -20,6 +20,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",
+    "@workos-inc/authkit-nextjs": "^4.6.3",
+    "@workos-inc/node": "^12.2.0",
     "crawlee": "^3.11.0",
     "leaflet": "^1.9.4",
     "next": "^15.0.0",

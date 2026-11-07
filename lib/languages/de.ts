@@ -8,6 +8,9 @@ export const de: Language = {
   excavator: [/bagger/],
   wheeled: [/mobilbagger|radbagger/],
   tracked: [/kettenbagger|raupenbagger/],
+  grader: [/grader|stra(?:ß|ss)enhobel|erdhobel/],
+  loader: [/radlader/],
+  roller: [/walze|walzenz[uü]g/],
   notForSale: [
     // tyres and parts
     /reifen|räder\b|felge|gummiketten?|gummipads?|laufrolle|ersatzteil|zahnrad|kühler|hydraulikpumpe|anhänger/,
@@ -16,7 +19,7 @@ export const de: Language = {
     // wanted ads
     /gesuch|suche\s/,
     // other machines
-    /radlader|gabelstapler|stapler|generator|cnc|bearbeitungszentrum|drehmaschine|fräsmaschine|dreh- und fräs|landmaschine/,
+    /gabelstapler|stapler|generator|cnc|bearbeitungszentrum|drehmaschine|fräsmaschine|dreh- und fräs|landmaschine/,
   ],
   softExclude: [/motor\b|motoren|kabine|schlüssel|scheibe/],
   partAtStart: [/(?:hydraulisch\w*\s+)?(?:fahrantrieb|endantrieb|fahrmotor|schwenkmotor|schnellwechsler|(?:tief|grab\w*|sieb)?löffel|planierschild|bolzen|zylinder|lanturi)/],

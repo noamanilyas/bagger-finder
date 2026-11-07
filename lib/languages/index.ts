@@ -69,12 +69,18 @@ export const EXCAVATOR_WORD = new RegExp(compile(ALL, (l) => [...l.excavator, ..
 export const WHEELED_WORD = new RegExp(compile(ALL, (l) => l.wheeled), "iu");
 /** The ad calls itself a crawler, in any known language. */
 export const TRACKED_WORD = new RegExp(compile(ALL, (l) => l.tracked), "iu");
+/** The ad calls itself a grader, wheel loader or roller, in any known language. */
+export const GRADER_WORD = new RegExp(compile(ALL, (l) => l.grader), "iu");
+export const LOADER_WORD = new RegExp(compile(ALL, (l) => l.loader), "iu");
+export const ROLLER_WORD = new RegExp(compile(ALL, (l) => l.roller), "iu");
 
 export type Exclusions = {
   weakExcavator: RegExp;
   notForSale: RegExp;
   softExclude: RegExp;
   partAtStart: RegExp;
+  /** wheel loader words of these languages: they turn down every wanted model that is not a loader */
+  loader: RegExp;
 };
 
 const exclusionsCache = new Map<string, Exclusions>();
@@ -90,6 +96,7 @@ export function exclusionsFor(codes: LangCode[]): Exclusions {
       notForSale: new RegExp(compile(languages, (l) => l.notForSale), "iu"),
       softExclude: new RegExp(compile(languages, (l) => l.softExclude), "iu"),
       partAtStart: new RegExp(String.raw`^\W*(?:${compile(languages, (l) => l.partAtStart)})`, "iu"),
+      loader: new RegExp(compile(languages, (l) => l.loader), "iu"),
     };
     exclusionsCache.set(key, found);
   }

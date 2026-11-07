@@ -3,13 +3,16 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AddComment, { isMarked, StarIcon } from "@/components/AddComment";
+import ConfirmScrape from "@/components/ConfirmScrape";
 import NextScrape from "@/components/NextScrape";
+import PhotoViewer from "@/components/PhotoViewer";
+import SignOut from "@/components/SignOut";
 import { DEFAULT_LIMITS, withinLimits } from "@/lib/config";
 import { costPanel, NEGOTIATION, negotiatedText, type PkrRate } from "@/lib/costs";
 import { isSaleAd } from "@/lib/market";
 import { INTERVAL_CHOICES, type Schedule } from "@/lib/schedule";
 import type { ScraperSettings } from "@/lib/settings";
-import type { Listing, Status } from "@/lib/types";
+import { shortId, type Listing, type Status } from "@/lib/types";
 
 const Map = dynamic(() => import("@/components/Map"), {
   ssr: false,
@@ -159,10 +162,23 @@ export default function Home() {
   /** the listing whose comment / mark-interesting dialog is open */
   const [commentFor, setCommentFor] = useState<string | null>(null);
   const closeComment = useCallback(() => setCommentFor(null), []);
+  const [confirmingScrape, setConfirmingScrape] = useState(false);
+  const [photoFor, setPhotoFor] = useState<string | null>(null);
+  const closePhoto = useCallback(() => setPhotoFor(null), []);
+  const closeConfirmScrape = useCallback(() => setConfirmingScrape(false), []);
+  // phones start on the list: list and map side by side do not fit
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 800px)").matches) setView("list");
+  }, []);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/listings", { cache: "no-store" });
+      // the session ended while the page was open; reloading goes to the sign-in page
+      if (res.status === 401) {
+        window.location.reload();
+        return;
+      }
       setData((await res.json()) as Payload);
       setError(null);
     } catch {
@@ -215,6 +231,11 @@ export default function Home() {
     return () => clearInterval(t);
   }, [running, load]);
 
+  // an automatic scrape may start while the question is open
+  useEffect(() => {
+    if (running) setConfirmingScrape(false);
+  }, [running]);
+
   const refresh = async () => {
     const res = await fetch("/api/scrape", {
       method: "POST",
@@ -231,7 +252,7 @@ export default function Home() {
   const visible = useMemo(() => {
     const limits = { maxPrice: limitOf(maxPrice), maxYear: limitOf(maxYear) };
     const modelQ = squash(modelText);
-    const q = query.trim().toLowerCase();
+    const q = query.trim().toLowerCase().replace(/^#/, "");
     return (data?.listings ?? [])
       .filter((l) => models.size === 0 || models.has(l.modelKey))
       .filter((l) => !wheeledOnly || l.wheeled)
@@ -239,7 +260,7 @@ export default function Home() {
       .filter((l) => source === "all" || l.source === source)
       .filter((l) => withinLimits(l, limits))
       .filter((l) => !modelQ || squash(`${l.title} ${l.make ?? ""} ${l.model ?? ""}`).includes(modelQ))
-      .filter((l) => !q || `${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
+      .filter((l) => !q || `${l.id} ${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
       .sort(sorter(sort));
   }, [data, models, source, maxPrice, maxYear, modelText, query, sort, wheeledOnly, dealsOnly]);
 
@@ -278,6 +299,7 @@ export default function Home() {
     setSource("all");
   };
 
+  const photoListing = photoFor ? data?.listings.find((x) => x.id === photoFor) : undefined;
   const commentListing = commentFor ? (data?.listings.find((x) => x.id === commentFor) ?? null) : null;
   const failed = Object.entries(data?.status.sources ?? {}).filter(([, s]) => !s.ok);
   const pagesDone = data?.status.pagesDone ?? 0;
@@ -314,10 +336,11 @@ export default function Home() {
           >
             <IconGear />
           </button>
-          <button onClick={() => void refresh()} disabled={running} className="btn" title="Scrapes using the Max € and Max year set in the filters">
+          <button onClick={() => setConfirmingScrape(true)} disabled={running} className="btn refresh" aria-label={running ? "Scraping" : "Refresh now"} title="Scrapes using the Max € and Max year set in the filters">
             <IconRefresh />
             {running ? "Scraping…" : "Refresh now"}
           </button>
+          <SignOut />
 
           {settingsOpen && (
             <div className="popover settings" role="dialog" aria-label="Scraper settings">
@@ -336,7 +359,7 @@ export default function Home() {
                 />
                 <span>
                   <span className="check-title">Only scrape Mobilbagger</span>
-                  <span className="sub">Used from the next scrape, including the automatic ones. Machines already stored stay until they expire.</span>
+                  <span className="sub">Listed crawlers, graders, loaders and rollers are always searched. Used from the next scrape, including the automatic ones. Machines already stored stay until they expire.</span>
                 </span>
               </label>
               <label className="field-label">
@@ -388,7 +411,7 @@ export default function Home() {
               <div className="row">
                 <label className="search">
                   <IconSearch />
-                  <input placeholder="Search text or town" aria-label="Search text or town" value={query} onChange={(e) => setQuery(e.target.value)} />
+                  <input placeholder="Search text, town or ID" aria-label="Search text, town or ID" value={query} onChange={(e) => setQuery(e.target.value)} />
                 </label>
                 <button
                   className={`btn secondary filters-btn${filtersOpen || activeFilters.length ? " on" : ""}`}
@@ -440,7 +463,7 @@ export default function Home() {
                   <div>
                     <span className="group-label">Models</span>
                     <div className="chips">
-                      {(data?.models ?? []).map((m) => (
+                      {(data?.models ?? []).filter((m) => models.has(m.key) || data?.listings.some((l) => l.modelKey === m.key)).map((m) => (
                         <button key={m.key} className={`chip${models.has(m.key) ? " on" : ""}`} aria-pressed={models.has(m.key)} onClick={() => toggleModel(m.key)}>
                           {m.label}
                         </button>
@@ -482,8 +505,18 @@ export default function Home() {
               {visible.map((l) => (
                 <li key={l.id} id={`item-${l.id}`} className={`card${l.id === selected ? " sel" : ""}`} onClick={() => select(l.id)}>
                   {l.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={l.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
+                    // opening the photo must not also select the card, which would move the map
+                    <button
+                      className="photo-btn"
+                      aria-label={`View photo of ${l.title}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPhotoFor(l.id);
+                      }}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={l.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
+                    </button>
                   ) : (
                     <span className="thumb" aria-hidden="true"><IconBagger size={30} /></span>
                   )}
@@ -508,6 +541,7 @@ export default function Home() {
                       {isDeal(l) && <span className={`tag deal ${l.aiVerdict ?? "unchecked"}`}>{dealLabel(l)}</span>}
                       {l.lat == null && <span className="tag warn">no map location</span>}
                       <span className="tag source">{l.source}</span>
+                      <span className="tag listing-id" title={`Listing ID ${l.id}`}>#{shortId(l.id)}</span>
                       {l.priceEur != null && (
                         <span className="to-pk">
                           To PK <strong>{costPanel(l.priceEur, pkrRate, isSaleAd(l)).pkr ?? costPanel(l.priceEur, pkrRate, isSaleAd(l)).eur}</strong>
@@ -543,7 +577,7 @@ export default function Home() {
 
         {view !== "list" && (
           <main className="right">
-            <Map listings={visible} selectedId={selected} onSelect={select} pkrRate={pkrRate} onMark={setCommentFor} />
+            <Map listings={visible} selectedId={selected} onSelect={select} pkrRate={pkrRate} onMark={setCommentFor} onPhoto={setPhotoFor} />
           </main>
         )}
       </div>
@@ -556,6 +590,25 @@ export default function Home() {
           onChange={load}
           onClose={closeComment}
           summary={isDeal(commentListing) ? dealWhy(commentListing) : null}
+        />
+      )}
+
+      {photoListing?.imageUrl && (
+        <PhotoViewer listing={{ ...photoListing, imageUrl: photoListing.imageUrl }} onClose={closePhoto} />
+      )}
+
+      {confirmingScrape && (
+        <ConfirmScrape
+          details={[
+            `Max price: ${limitOf(maxPrice) != null ? eur(limitOf(maxPrice)!) : "no limit"}`,
+            `Max year: ${limitOf(maxYear) ?? "no limit"}`,
+            ...(settings ? [settings.mobileOnly ? "Mobilbagger, plus listed non-wheeled machines" : "All machine types"] : []),
+          ]}
+          onConfirm={() => {
+            setConfirmingScrape(false);
+            void refresh();
+          }}
+          onClose={closeConfirmScrape}
         />
       )}
     </div>

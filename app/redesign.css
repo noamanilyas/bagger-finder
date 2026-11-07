@@ -87,7 +87,6 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-line
 .check-title { font-size: 14px; color: var(--ink); }
 
 /* ---------- left panel ---------- */
-.split { grid-template-columns: minmax(360px, 480px) 1fr; }
 .controls { padding: 12px 16px; gap: 10px; }
 .search { position: relative; flex: 1; min-width: 0; display: flex; }
 .search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
@@ -117,6 +116,10 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-line
 .card:hover { background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
 .card.sel { background: var(--pick); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .card img, .thumb { width: 76px; height: 60px; border-radius: 8px; flex: none; }
+.photo-btn { flex: none; display: block; padding: 0; border: 0; border-radius: 8px; background: none; cursor: zoom-in; }
+.photo-btn img { display: block; }
+.photo-btn:hover img { opacity: 0.85; }
+.photo-btn:focus-visible, .popup-photo:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .thumb { display: grid; place-items: center; background: var(--bg); color: var(--muted); }
 .title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
 .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
@@ -130,6 +133,7 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-line
 .tag.model { color: var(--ink); }
 .tag.wheel { color: var(--good); background: var(--good-soft); }
 .tag.source { background: transparent; padding: 0; font-weight: 400; }
+.tag.listing-id { background: transparent; padding: 0; font-weight: 400; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; user-select: all; }
 .tag.warn { color: var(--sel); background: color-mix(in srgb, var(--sel) 10%, var(--panel)); }
 .tag.deal { color: #92400e; background: #fdf0dc; }
 .tag.deal.interesting { color: #92400e; background: #fdf0dc; }
@@ -164,12 +168,34 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-line
 .comment .btn { height: 28px; padding: 0 8px; }
 .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
 
+/* ---------- sign-in ---------- */
+.sign-out { display: contents; }
+.not-allowed { max-width: 440px; margin: 0 auto; padding: 18vh 16px 32px; display: grid; gap: 14px; justify-items: start; }
+.not-allowed h1 { margin: 0; font-size: 22px; }
+.not-allowed p { margin: 0; line-height: 1.5; }
+
+/* ---------- "Refresh now" confirmation ---------- */
+.dialog.confirm { max-width: 400px; }
+.dialog.confirm .dialog-body { padding-top: 0; gap: 10px; }
+.confirm-text { margin: 0; font-size: 14px; line-height: 1.45; }
+.confirm-details { margin: 0; padding: 10px 12px; list-style: none; display: grid; gap: 3px; border-radius: 10px; background: var(--bg); font-size: 13px; }
+
 /* ---------- map ---------- */
 .pin { background: var(--pin); color: #fff; padding: 2px 8px; font: 600 12px system-ui, sans-serif; }
 .pin.deal { background: #047857; }
 .pin.sel { background: var(--accent); color: var(--accent-ink); }
 
+/* ---------- big photo view ---------- */
+.viewer { position: fixed; inset: 0; z-index: 2000; display: grid; grid-template-rows: minmax(0, 1fr) auto; justify-items: center; gap: 10px; padding: 16px; background: rgb(0 0 0 / 0.9); }
+.viewer img { width: 100%; height: 100%; object-fit: contain; min-height: 0; }
+.viewer-caption { max-width: min(900px, 100%); padding-right: 0; color: #fff; font-size: 14px; text-align: center; }
+.viewer-close { position: absolute; top: 12px; right: 12px; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: rgb(0 0 0 / 0.6); color: #fff; cursor: pointer; }
+.viewer-close:hover { background: rgb(60 60 60 / 0.9); }
+
 /* Leaflet popups stay white in dark mode, so fixed light colors here */
+.popup-photo { display: block; width: 100%; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: #f5f4f0; cursor: zoom-in; }
+/* a fixed height, so the popup keeps its place on the map when the photo arrives */
+.popup-photo img { display: block; width: 100%; height: 160px; object-fit: cover; }
 .leaflet-popup-content-wrapper { border-radius: 12px; }
 .leaflet-popup-content { margin: 14px 16px; }
 .popup { min-width: 0; display: grid; gap: 10px; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #17181a; }
@@ -193,19 +219,90 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-line
 .popup .mark-btn svg { color: #b45309; flex: none; }
 
 /* ---------- view modes ---------- */
-.split.view-list, .split.view-map { grid-template-columns: 1fr; }
+.split.view-list, .split.view-map { grid-template-columns: minmax(0, 1fr); }
 .view-list .left { border-right: 0; }
-.view-list .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); align-content: start; }
+.view-list .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); align-content: start; }
 .view-list .card { border-right: 1px solid var(--line); }
 .view-list .list { overflow-y: auto; }
 
+/* ---------- phones and small tablets ---------- */
 @media (max-width: 800px) {
-  .top { padding: 8px 12px; }
+  /* header: [logo + name] [gear] [refresh] [sign out] on one row, then [view switch] [next scrape] */
+  .top {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    grid-template-areas: "brand gear refresh out" "seg next next next";
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+  .top-actions { display: contents; }
+  .brand { grid-area: brand; }
   .brand .sub { display: none; }
+  .brand h1 { font-size: 17px; }
+  .seg { grid-area: seg; justify-self: start; }
+  .seg button { height: 32px; padding: 0 12px; }
+  .next-scrape { grid-area: next; justify-self: end; width: auto; margin: 0; text-align: right; }
+  .next-scrape progress { display: none; }
+  .top-actions > .btn.icon { grid-area: gear; width: 40px; height: 40px; }
+  .btn.refresh { grid-area: refresh; width: 40px; height: 40px; padding: 0; gap: 0; font-size: 0; } /* icon only */
+  .sign-out .btn.icon { grid-area: out; width: 40px; height: 40px; }
+  .popover { top: calc(100% + 4px); right: 12px; width: calc(100vw - 24px); max-width: 400px; }
+
+  /* list + map: map on top, list below; list or map alone fill the screen */
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .left, .right { min-width: 0; }
+  .split.view-split { grid-template-rows: 38% 62%; }
   .split.view-list, .split.view-map { grid-template-rows: 1fr; }
+  .view-list .list { grid-template-columns: minmax(0, 1fr); }
+
+  /* bigger touch targets, 16px text so phones do not zoom into fields */
+  .controls { padding: 10px 12px; }
+  input:not([type="checkbox"]):not([type="radio"]), select, .dialog-body textarea { height: 42px; font-size: 16px; }
+  .dialog-body textarea { height: auto; }
+  .btn { height: 40px; }
+  .chip { height: 36px; padding: 0 13px; }
+  .list-head { padding: 6px 12px; }
+  .list-head select { height: 34px; font-size: 14px; }
+
+  /* filters open as a sheet from the bottom, so the list stays in view behind it */
+  .filter-panel {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 1500;
+    max-height: 85dvh; overflow-y: auto;
+    padding: 16px 16px calc(12px + env(safe-area-inset-bottom));
+    background: var(--panel); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0;
+    box-shadow: 0 -12px 40px rgb(0 0 0 / 0.22);
+  }
+  .filter-panel::before { content: ""; justify-self: center; width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin-top: -6px; }
   .filter-grid { grid-template-columns: 1fr 1fr; }
   .filter-grid .field-label:first-child { grid-column: 1 / -1; }
-  .view-list .list { grid-template-columns: 1fr; }
+  .filter-foot { position: sticky; bottom: calc(-12px - env(safe-area-inset-bottom)); margin: 0 -16px calc(-12px - env(safe-area-inset-bottom)); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--panel); border-top: 1px solid var(--line); }
+  .filter-foot .btn:last-child { flex: 1; }
+
+  /* cards */
+  .card { gap: 10px; padding: 10px 4px 10px 12px; }
+  .card img, .thumb { width: 64px; height: 52px; }
+  .title { font-size: 14px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
+  .title-row { align-items: flex-start; }
+  .price { font-size: 14px; }
+  .to-pk { margin-left: 0; flex-basis: 100%; }
+  .star { width: 44px; height: 44px; margin-top: -10px; }
+
+  /* comment dialog becomes a bottom sheet */
+  .dialog-backdrop { place-items: end stretch; padding: 0; }
+  .dialog { max-width: none; max-height: 92dvh; border-radius: 16px 16px 0 0; }
+  .dialog-head { padding: 14px 16px 10px; }
+  .dialog-summary { margin: 0 16px; }
+  .dialog-body { padding: 14px 16px; }
+  .dialog-foot { position: sticky; bottom: 0; background: var(--panel); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .dialog-foot .btn:last-child { flex: 1; }
   .watch-grid { grid-template-columns: 1fr; }
-  .to-pk { margin-left: 0; }
+
+  /* map popup fits a phone */
+  .leaflet-popup-content { margin: 12px; }
+  .popup-actions .btn { height: 40px; }
+}
+
+@media (min-width: 801px) {
+  .split { grid-template-columns: minmax(360px, 480px) 1fr; }
 }

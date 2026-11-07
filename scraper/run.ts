@@ -11,10 +11,10 @@
 import { CheerioCrawler, PlaywrightCrawler } from "crawlee";
 import crypto from "node:crypto";
 import { applyMarket, crossSiteDuplicates } from "../lib/market";
-import { SOURCES, WANTED, isWheeled, looksRelevant, matchModel, scrapeLimits, withinLimits } from "../lib/config";
+import { SOURCES, WANTED, fitsMobileOnly, isWheeled, looksRelevant, matchModel, scrapeLimits, withinLimits } from "../lib/config";
 import { expandCountryCode, inEurope, isExcludedPlace } from "../lib/countries";
 import { cookieLabels } from "../lib/languages";
-import { hasSupabase, deleteOlderThan, finishRun, loadListings, recordHistory, saveListings } from "../lib/supabase";
+import { hasSupabase, deleteListings, deleteOlderThan, finishRun, loadListings, recordHistory, saveListings } from "../lib/supabase";
 import { DEFAULT_SETTINGS, loadSettings } from "../lib/settings";
 import { readDb, readGeoCache, readStatus, writeDb, writeStatus } from "../lib/store";
 import type { Listing, SourceResult, Status } from "../lib/types";
@@ -27,7 +27,7 @@ import { isPhoto } from "./images";
 
 const MAX_CARDS_PER_PAGE = 60;
 const SAME_SITE_DELAY_SECS = 3;
-const KEEP_DAYS = 14;
+const KEEP_DAYS = 3;
 const FORCE_BROWSER = process.env.USE_BROWSER === "true";
 /** Free models are limited: ads over this budget use the regex parser and get AI on a later scrape. */
 const MAX_AI_CARDS_PER_RUN = 100;
@@ -94,7 +94,7 @@ const cardHash = (text: string) =>
     .digest("hex")
     .slice(0, 16);
 
-const fromKnown = (l: Listing, b: Block): Extracted => ({
+const fromKnown = (l: Listing, b: Block, parsed: Extracted): Extracted => ({
   url: b.href,
   title: l.title,
   description: l.description,
@@ -103,7 +103,7 @@ const fromKnown = (l: Listing, b: Block): Extracted => ({
   priceEur: l.priceEur,
   year: l.year,
   hours: l.hours,
-  location: l.location,
+  location: l.location ?? parsed.location, // an unchanged card must not keep a place that was missed the first time
   imageUrl: b.img ?? l.imageUrl,
   adType: l.adType,
   issues: l.issues,
@@ -133,15 +133,16 @@ async function processBlocks(job: Job, blocks: Block[], info: (m: string) => voi
   let aiLeft = MAX_AI_CARDS_PER_RUN - counts.sentToAi;
   for (const b of relevant) {
     const parsed = heuristicItem(b, source);
-    if (!(matchModel(parsed.title, source.languages) ?? matchModel(b.text, source.languages)) || !withinLimits(parsed, limits)) continue;
-    if (settings.mobileOnly && !isWheeled(`${parsed.title} ${b.text}`, parsed.title)) continue;
+    const model = matchModel(parsed.title, source.languages) ?? matchModel(b.text, source.languages);
+    if (!model || !withinLimits(parsed, limits, model)) continue;
+    if (settings.mobileOnly && !fitsMobileOnly(model, `${parsed.title} ${b.text}`, parsed.title)) continue;
     const id = listingId(b.href);
     if (seenThisRun.has(id)) continue;
     seenThisRun.add(id);
     counts.cards++;
     const prev = known.get(id);
     if (prev && prev.adType && prev.cardHash === cardHash(b.text)) {
-      items.push(fromKnown(prev, b));
+      items.push(fromKnown(prev, b, parsed));
       counts.reused++;
     } else if (hasAi() && aiLeft > 0 && source.ai !== false) {
       forAi.push(b);
@@ -191,9 +192,11 @@ async function crawl() {
       sameDomainDelaySecs: SAME_SITE_DELAY_SECS,
       maxRequestRetries: 1,
       requestHandlerTimeoutSecs: 600, // may wait its turn for the AI (see scraper/extract.ts)
-      async requestHandler({ $, request, log }) {
+      async requestHandler({ $, request, log, response }) {
         const job: Job = { url: request.url, source: String(request.userData.source) };
         startingPage(job);
+        // A 404 page still has menu links, so without this a dead search address looks like "no results".
+        if (response.statusCode === 404) log.warning(`Page not found (404), check this address in lib/config.ts: ${request.url}`);
         const source = SOURCES.find((s) => s.id === job.source);
         const blocks = collectBlocksCheerio($, request.loadedUrl ?? request.url, source?.isListing, source?.spacedText);
         // A normal results page has dozens of links; if it has almost none it was probably rendered by
@@ -259,6 +262,7 @@ async function merge() {
   save("Matching models and geocoding…");
   const now = new Date().toISOString();
   const byId = new Map(known);
+  const outsideArea: string[] = [];
   const cache = readGeoCache();
   const limits = scrapeLimits();
   console.log(`[scrape] limits: max price ${limits.maxPrice ?? "none"}, max year ${limits.maxYear ?? "none"}`);
@@ -273,16 +277,26 @@ async function merge() {
       // AI may summarise the word for excavator away ("Hyundai R140W"), although the card passed this same check.
       matchModel(cardText, source.languages);
     if (!wanted) continue;
-    if (!withinLimits(item, limits)) continue;
+    if (!withinLimits(item, limits, wanted)) continue;
     const location = source.countryCodes ? expandCountryCode(item.location) : item.location;
-    if (isExcludedPlace(location)) continue;
-
     const url = normalizeUrl(item.url);
     const id = listingId(url);
+    // Stored before its place was known? It goes now, instead of staying in the list until it ages out.
+    const drop = () => {
+      if (byId.delete(id)) outsideArea.push(id);
+    };
+    if (isExcludedPlace(location)) {
+      drop();
+      continue;
+    }
+
     const prev = byId.get(id);
     const sameLoc = prev && prev.location === location;
     const coords = sameLoc && prev.lat != null ? { lat: prev.lat, lng: prev.lng! } : await geocode(location, cache, source.defaultCountry);
-    if (coords && !inEurope(coords)) continue;
+    if (coords && !inEurope(coords)) {
+      drop();
+      continue;
+    }
 
     const listing: Listing = {
       id,
@@ -343,6 +357,7 @@ async function merge() {
   save(`Saving ${listings.length} listings…`);
   if (hasSupabase()) {
     await saveListings(listings);
+    await deleteListings(outsideArea);
     await deleteOlderThan(new Date(cutoff).toISOString());
     // A history problem must not fail the scrape: unrecorded changes are picked up on the next one.
     try {

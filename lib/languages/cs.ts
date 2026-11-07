@@ -6,7 +6,10 @@ export const cs: Language = {
   excavator: ["rýpadl*", "bagr*"],
   wheeled: ["kolov* rýpadl*", "rýpadl* kolov*", "kolov* bagr*", "bagr* kolov*"],
   tracked: ["pásov* rýpadl*", "rýpadl* pásov*"],
-  notForSale: ["pronájem", "k pronájmu", "pronajmu", "koupím", "hledám", "sháním", "čeln* nakladač*", "vysokozdvižn* vozík*"],
+  grader: ["grejdr*", "srovnávač*"],
+  loader: ["čeln* nakladač*", "kolov* nakladač*"],
+  roller: ["válec", "válce", "hutnic* válec"],
+  notForSale: ["pronájem", "k pronájmu", "pronajmu", "koupím", "hledám", "sháním", "vysokozdvižn* vozík*"],
   // Whole words: "kola" is a wheel ad, "kolové rýpadlo" is the machine we want.
   partAtStart: ["náhradní díl*", "díly", "díl", "pneu*", "kola", "kolo", "pásy", "lžíc*", "motor*", "čerpadlo", "válec", "rychloupínák*"],
   labels: { year: ["rok výroby"], hours: ["motohodin*", "mth", "hodin*"] },
