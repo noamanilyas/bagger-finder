@@ -1,3 +1,4 @@
+import { EUROPE, NON_EUROPE } from "../lib/config";
 import { readGeoCache, writeGeoCache, type GeoCache } from "../lib/store";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -19,21 +20,29 @@ export async function geocode(
   if (wait > 0) await sleep(wait);
   lastCall = Date.now();
 
-  const q = /\b[A-Za-z]{2,}\b.*(deutschland|germany|österreich|schweiz|polen|tschechien)/i.test(location)
-    ? location
-    : `${location}, Deutschland`;
-  try {
+  const search = async (q: string) => {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
       { headers: { "User-Agent": "bagger-finder/0.1 (personal excavator search)" } },
     );
-    if (!res.ok) return null; // do not cache transient failures
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as { lat: string; lon: string }[];
-    const hit = data[0] ? { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : null;
+    return data[0] ? { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : null;
+  };
+
+  try {
+    const named = EUROPE.test(location) || NON_EUROPE.test(location);
+    let hit = await search(named ? location : `${location}, Deutschland`);
+    if (!hit && !named) {
+      // no country given and not a German place: try the name on its own
+      await sleep(1100);
+      lastCall = Date.now();
+      hit = await search(location);
+    }
     cache[key] = hit;
     writeGeoCache(cache);
     return hit;
   } catch {
-    return null;
+    return null; // do not cache transient failures
   }
 }

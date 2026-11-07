@@ -1,3 +1,5 @@
+import { EUROPE, NON_EUROPE } from "../lib/config";
+
 /** A candidate listing card pulled from the page DOM: the link, the card text and a thumbnail. */
 export type Block = { href: string; text: string; img: string | null };
 
@@ -41,9 +43,9 @@ Reply with ONLY a JSON object, no markdown and no commentary, in exactly this sh
 Rules:
 - Only use information present in the cards. Never invent values; use null when unknown.
 - "url" must be copied exactly from the card's url.
-- priceEur is an integer in EUR, without dots or currency (null for "VB", "auf Anfrage" or if absent).
-- year is the construction year (Baujahr / EZ), hours is operating hours (Betriebsstunden / Std.).
-- location is the town, ideally "PLZ Town" (e.g. "12681 Berlin"); null if absent.
+- priceEur is an integer in EUR, without dots or currency (null for "VB", "auf Anfrage" or if absent). If a card shows another currency and an EUR value (e.g. "45.800 $ ≈ 40.970 €"), use the EUR value.
+- year is the construction year (Baujahr / EZ), hours is operating hours (Betriebsstunden / Std. / M/Std.).
+- location is the town, ideally "PLZ Town" (e.g. "12681 Berlin"); if the card names a country, write "Town, Country" (e.g. "Jordanow, Polen"); null if absent.
 - make/model e.g. make "Doosan", model "DX55-9" ("Dosan" is a misspelling of Doosan).
 - description: one short sentence summarising the card.
 - Skip anything that is not a complete excavator for sale (spare parts, buckets, attachments, engines, ads, navigation links).
@@ -204,6 +206,11 @@ async function viaAiChunk(blocks: Block[], sourceName: string): Promise<Extracte
 const BOILERPLATE =
   /Erfolgreich: Ihre Nachricht wurde versandt\.|Kleinanzeige|Mehr Bilder anfragen|Bereits angefragt|Anfrage senden|Anfragen|Anrufen|Suche speichern|Ergebnisse|Preisinfo/g;
 
+const ML_PLACE = new RegExp(
+  `\\b((?:${EUROPE.source}|${NON_EUROPE.source})\\p{L}*),?\\s+((?:Bad|Sankt |St\\. )?\\p{L}[\\p{L}'-]*)(?: \\(\\s*([^)]*?)\\s*\\))?`,
+  "iu",
+);
+
 function parseCard(raw: string): { title: string; location: string | null; text: string } {
   const text = raw.replace(BOILERPLATE, " ").replace(/\b\d+ \/ \d+\b/g, " ").replace(/\s+/g, " ").trim();
 
@@ -217,6 +224,14 @@ function parseCard(raw: string): { title: string; location: string | null; text:
     const title = m[3].replace(/\d{1,3}(?:\.\d{3})*\s*€.*$/, "").trim();
     return { title: title.slice(0, 140), location: `${m[1]} ${m[2].trim()}`, text };
   }
+
+  // Machineryline: "<title> Mobilbagger <photos> <title> <price> … <Country>, <Town> <seller>"
+  const place = text.match(ML_PLACE);
+  const mlTitle = text.match(/^(.{3,120}?bagger)\s+\d{1,3}\s/i);
+  if (place && mlTitle) {
+    const town = place[2].trim() + (place[3] ? `, ${place[3].trim()}` : "");
+    return { title: mlTitle[1], location: `${town}, ${place[1]}`, text };
+  }
   return { title: text.slice(0, 140), location: null, text };
 }
 
@@ -225,9 +240,11 @@ const toInt = (s: string | undefined) => (s ? parseInt(s.replace(/[.\s]/g, ""), 
 function viaHeuristic(blocks: Block[]): Extracted[] {
   return blocks.map((b) => {
     const { title, location, text } = parseCard(b.text);
-    const price = text.match(/(\d{1,3}(?:\.\d{3})+|\d{4,7})\s*(?:€|EUR)/i);
+    // Some cards glue the model to the price ("LCR-799.000 €" is LCR-7 at 99.000 €). "EUR\b" so "2023 Euro 3" is no price.
+    const priceText = text.replace(/([A-Za-z\d]-\d)(?=\d{1,3}\.\d{3}\s*(?:€|EUR\b))/gi, "$1 ");
+    const price = priceText.match(/(\d{1,3}(?:\.\d{3})+|\d{4,7})\s*(?:€|EUR\b)/i);
     const year = text.match(/Baujahr:?\s*((?:19|20)\d{2})/i) ?? text.match(/\b((?:19[89]|20[0-3])\d)\b/);
-    const hours = text.match(/Betriebsstunden:?\s*(?:ca\.\s*)?(\d{1,3}(?:\.\d{3})+|\d{2,6})/i) ?? text.match(/(?<![\d.])(\d{1,3}(?:\.\d{3})+|\d{2,6})\s*(?:h|std)(?![a-zäöüß])/i);
+    const hours = text.match(/Betriebsstunden:?\s*(?:ca\.\s*)?(\d{1,3}(?:\.\d{3})+|\d{2,6})/i) ?? text.match(/(?<![\d.])(\d{1,3}(?:\.\d{3})+|\d{2,6})\s*(?:m\/)?(?:h|std)(?![a-zäöüß])/i);
     return {
       url: b.href,
       title,
@@ -241,6 +258,14 @@ function viaHeuristic(blocks: Block[]): Extracted[] {
       imageUrl: b.img,
     };
   });
+}
+
+/** Sites are read in parallel, but free AI models rate-limit quickly, so AI requests still go one by one. */
+let aiTurn: Promise<unknown> = Promise.resolve();
+function oneAtATime<T>(task: () => Promise<T>): Promise<T> {
+  const run = aiTurn.then(task, task);
+  aiTurn = run.catch(() => undefined);
+  return run;
 }
 
 export async function extract(
@@ -259,7 +284,12 @@ export async function extract(
       continue;
     }
     try {
-      const got = await viaAiChunk(chunk, sourceName);
+      // AI may have been switched off while this chunk waited for its turn
+      const got = await oneAtATime(async () => (aiDisabled ? null : viaAiChunk(chunk, sourceName)));
+      if (got === null) {
+        items.push(...viaHeuristic(chunk));
+        continue;
+      }
       items.push(...(got.length > 0 ? got : viaHeuristic(chunk))); // an empty AI answer is not trusted
       aiChunks++;
       failedChunksInARow = 0;

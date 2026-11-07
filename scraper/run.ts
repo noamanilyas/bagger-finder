@@ -8,15 +8,18 @@
  *      structured listings (regex fallback without an API key / when the models fail)
  *   4. listings are filtered to the wanted models, geocoded and merged into data/listings.json
  */
-import { CheerioCrawler, PlaywrightCrawler, type CheerioRoot } from "crawlee";
+import { CheerioCrawler, PlaywrightCrawler } from "crawlee";
 import crypto from "node:crypto";
-import { FOREIGN, SOURCES, WANTED, isWheeled, looksRelevant, matchModel } from "../lib/config";
+import { NON_EUROPE, SOURCES, WANTED, inEurope, isWheeled, looksRelevant, matchModel, scrapeLimits, withinLimits } from "../lib/config";
+import { hasSupabase, deleteOlderThan, loadListings, saveListings } from "../lib/supabase";
 import { readDb, readGeoCache, readStatus, writeDb, writeStatus } from "../lib/store";
 import type { Listing, SourceResult, Status } from "../lib/types";
+import { collectBlocksCheerio, withoutQuery } from "./cards";
 import { extract, hasAi, type Block, type Extracted } from "./extract";
 import { geocode } from "./geocode";
 
 const MAX_CARDS_PER_PAGE = 60;
+const SAME_SITE_DELAY_SECS = 3;
 const KEEP_DAYS = 14;
 const FORCE_BROWSER = process.env.USE_BROWSER === "true";
 
@@ -27,9 +30,14 @@ const status: Status = {
   finishedAt: null,
   message: "Crawling…",
   extractor: hasAi() ? "ai" : "heuristic",
+  pagesDone: 0,
+  pagesTotal: 0,
   sources: {},
 };
-const save = (message?: string) => writeStatus({ ...status, message: message ?? status.message });
+const save = (message?: string) => {
+  if (message) status.message = message;
+  writeStatus({ ...status, lastActivity: new Date().toISOString() });
+};
 
 const collected: { source: string; sourceName: string; item: Extracted; wheeledHint: boolean }[] = [];
 
@@ -37,6 +45,17 @@ type Job = { url: string; source: string };
 
 function sourceStat(id: string): SourceResult {
   return (status.sources[id] ??= { ok: true, pages: 0, found: 0 });
+}
+
+const nameOf = (job: Job) => SOURCES.find((s) => s.id === job.source)?.name ?? job.source;
+
+function startingPage(job: Job, how = "") {
+  save(`Reading ${nameOf(job)}${how}…`);
+}
+
+function finishedPage() {
+  status.pagesDone = (status.pagesDone ?? 0) + 1;
+  save();
 }
 
 function normalizeUrl(u: string): string {
@@ -50,60 +69,20 @@ function normalizeUrl(u: string): string {
   }
 }
 
-const clean = (s: string) => s.replace(/\s+/g, " ").trim();
-
-/** Cards from server-rendered HTML: for every link, the largest small ancestor's text. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type CheerioNode = any; // cheerio's generic node types are not worth the ceremony here
-
-function collectBlocksCheerio($: CheerioRoot, pageUrl: string): Block[] {
-  const best = new Map<string, Block>();
-  const textOf = (n: CheerioNode): string => clean($(n).clone().find("script,style,noscript").remove().end().text());
-  $("a[href]").each((_: number, a: CheerioNode) => {
-    const raw = $(a).attr("href");
-    if (!raw || /^(javascript:|mailto:|tel:|#)/i.test(raw)) return;
-    let href: string;
-    try {
-      href = new URL(raw, pageUrl).toString();
-    } catch {
-      return;
-    }
-    if (!/^https?:/.test(href) || href.split("#")[0] === pageUrl.split("#")[0]) return;
-
-    let container: CheerioNode = a;
-    let text = textOf(a);
-    for (const parent of $(a).parents().toArray().slice(0, 5) as CheerioNode[]) {
-      const t = textOf(parent);
-      if (t.length > 800) break;
-      container = parent;
-      text = t;
-    }
-    if (text.length < 25) return;
-    const imgEl = $(container).find("img").first();
-    const src = imgEl.attr("src") || imgEl.attr("data-src") || null;
-    let img: string | null = null;
-    try {
-      img = src ? new URL(src, pageUrl).toString() : null;
-    } catch {
-      img = null;
-    }
-    const prev = best.get(href);
-    if (!prev || text.length > prev.text.length) best.set(href, { href, text: text.slice(0, 600), img });
-  });
-  return [...best.values()];
-}
-
 /** Filters cards, runs extraction and stores the result. Returns the number of relevant cards. */
 async function processBlocks(job: Job, blocks: Block[], info: (m: string) => void, countEmpty: boolean): Promise<number> {
   const source = SOURCES.find((s) => s.id === job.source)!;
   const stat = sourceStat(job.source);
-  const relevant = blocks.filter((b) => looksRelevant(b.text)).slice(0, MAX_CARDS_PER_PAGE);
+  const relevant = blocks
+    .filter((b) => looksRelevant(b.text) && (!source.isListing || source.isListing(b.href)))
+    .slice(0, MAX_CARDS_PER_PAGE);
   if (relevant.length === 0) {
     if (countEmpty) stat.pages += 1;
     info(`${source.name}: ${blocks.length} links, 0 relevant (${job.url})`);
     return 0;
   }
   console.log(`[sample] ${source.name}: ${JSON.stringify(relevant.slice(0, 2).map((b) => b.text.slice(0, 320)))}`);
+  save(`${source.name}: reading ${relevant.length} ads…`);
   const { items, via } = await extract(relevant, source.name);
   status.extractor = via;
   stat.pages += 1;
@@ -111,7 +90,6 @@ async function processBlocks(job: Job, blocks: Block[], info: (m: string) => voi
   const wheeledHint = /\/mobilbagger\//.test(job.url); // TruckScout24 wheeled-excavator category page
   for (const item of items) collected.push({ source: job.source, sourceName: source.name, item, wheeledHint });
   info(`${source.name}: ${blocks.length} links, ${relevant.length} relevant, ${items.length} listings via ${via} (${job.url})`);
-  save(`Crawled ${source.name} (${stat.pages} pages)…`);
   return relevant.length;
 }
 
@@ -129,28 +107,34 @@ async function crawl() {
   }
 
   const needBrowser: Job[] = FORCE_BROWSER ? [...jobs] : [];
+  status.pagesTotal = FORCE_BROWSER ? 0 : jobs.length;
   const failed = new Map<string, string>(); // url -> last error
 
   // ---- phase 1: plain HTTP + Cheerio ---------------------------------------------------------
   if (!FORCE_BROWSER) {
     const crawler = new CheerioCrawler({
-      maxConcurrency: 1,
-      maxRequestsPerMinute: 20,
+      // The sites run side by side, but each one still gets at most one page every few seconds.
+      maxConcurrency: SOURCES.filter((s) => s.enabled).length,
+      sameDomainDelaySecs: SAME_SITE_DELAY_SECS,
       maxRequestRetries: 1,
-      requestHandlerTimeoutSecs: 300,
+      requestHandlerTimeoutSecs: 600, // may wait its turn for the AI (see scraper/extract.ts)
       async requestHandler({ $, request, log }) {
         const job: Job = { url: request.url, source: String(request.userData.source) };
-        const blocks = collectBlocksCheerio($, request.loadedUrl ?? request.url);
+        startingPage(job);
+        const isListing = SOURCES.find((s) => s.id === job.source)?.isListing;
+        const blocks = collectBlocksCheerio($, request.loadedUrl ?? request.url, isListing);
         // A normal results page has dozens of links; if it has almost none it was probably rendered by
         // JavaScript (or blocked), so retry it in a real browser. Plenty of links but no match = no results.
         const looksEmpty = blocks.length < 15;
         const n = await processBlocks(job, blocks, (m) => log.info(m), !looksEmpty);
         if (n === 0 && looksEmpty) needBrowser.push(job);
+        finishedPage();
       },
       async failedRequestHandler({ request }, error) {
         const job: Job = { url: request.url, source: String(request.userData.source) };
         failed.set(job.url, shortError(error));
         needBrowser.push(job);
+        finishedPage();
         console.warn(`[crawl] http fetch failed ${request.url}: ${shortError(error)}`);
       },
     });
@@ -160,6 +144,7 @@ async function crawl() {
 
   // ---- phase 2: headless Chromium, only for pages that need it -------------------------------
   if (needBrowser.length > 0) {
+    status.pagesTotal = (status.pagesTotal ?? 0) + needBrowser.length;
     save(`Opening ${needBrowser.length} page(s) in a browser…`);
     const crawler = new PlaywrightCrawler({
       maxConcurrency: 1, // polite, and keeps memory low on small hosts
@@ -180,6 +165,7 @@ async function crawl() {
       ],
       async requestHandler({ page, request, log }) {
         const job: Job = { url: request.url, source: String(request.userData.source) };
+        startingPage(job, " in a browser");
 
         await page.waitForLoadState("domcontentloaded");
         // Dismiss cookie banners if there is one.
@@ -190,11 +176,18 @@ async function crawl() {
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
         await page.waitForTimeout(1000);
 
-        const blocks: Block[] = await page.evaluate(() => {
+        // Same rule as collectBlocksCheerio: a card must not grow into an ancestor holding another listing.
+        const isListing = SOURCES.find((s) => s.id === job.source)?.isListing;
+        const allLinks = await page.$$eval("a[href]", (as) => as.map((a) => (a as HTMLAnchorElement).href));
+        const listingLinks = isListing ? allLinks.filter(isListing).map(withoutQuery) : [];
+
+        const blocks: Block[] = await page.evaluate((listings) => {
+          const listingSet = new Set(listings);
           const best = new Map<string, { text: string; img: string | null }>();
           document.querySelectorAll("a[href]").forEach((a) => {
             const href = (a as HTMLAnchorElement).href;
             if (!/^https?:/.test(href) || href.split("#")[0] === location.href.split("#")[0]) return;
+            const own = href.split(/[?#]/)[0];
             let el: HTMLElement = a as HTMLElement;
             let text = el.innerText || "";
             let container: HTMLElement = el;
@@ -202,6 +195,11 @@ async function crawl() {
               el = el.parentElement;
               const t = el.innerText || "";
               if (t.length > 800) break;
+              const holdsOther = Array.from(el.querySelectorAll("a[href]")).some((x) => {
+                const other = (x as HTMLAnchorElement).href.split(/[?#]/)[0];
+                return other !== own && listingSet.has(other);
+              });
+              if (holdsOther) break;
               text = t;
               container = el;
             }
@@ -215,13 +213,15 @@ async function crawl() {
             }
           });
           return [...best].map(([href, v]) => ({ href, text: v.text, img: v.img }));
-        });
+        }, listingLinks);
 
         await processBlocks(job, blocks, (m) => log.info(m), true);
         failed.delete(job.url); // the browser got through
+        finishedPage();
       },
       async failedRequestHandler({ request }, error) {
         failed.set(request.url, shortError(error));
+        finishedPage();
         console.warn(`[crawl] browser failed ${request.url}: ${shortError(error)}`);
       },
     });
@@ -241,21 +241,26 @@ async function crawl() {
 async function merge() {
   save("Matching models and geocoding…");
   const now = new Date().toISOString();
-  const db = readDb();
-  const byId = new Map(db.listings.map((l) => [l.id, l]));
+  const existing = hasSupabase() ? await loadListings() : readDb().listings;
+  const byId = new Map(existing.map((l) => [l.id, l]));
   const cache = readGeoCache();
+  const limits = scrapeLimits();
+  console.log(`[scrape] limits: max price ${limits.maxPrice ?? "none"}, max year ${limits.maxYear ?? "none"}`);
 
-  for (const { sourceName, item, wheeledHint } of collected) {
+  for (const [i, { sourceName, item, wheeledHint }] of collected.entries()) {
+    if (i % 25 === 0) save(`Matching models and finding map locations: ${i + 1} of ${collected.length} ads…`);
     const text = [item.title, item.make, item.model, item.description].filter(Boolean).join(" ");
     const wanted = matchModel(`${item.title} ${item.make ?? ""} ${item.model ?? ""}`) ?? matchModel(text);
     if (!wanted) continue;
-    if (item.location && FOREIGN.test(item.location)) continue;
+    if (!withinLimits(item, limits)) continue;
+    if (item.location && NON_EUROPE.test(item.location)) continue;
 
     const url = normalizeUrl(item.url);
     const id = crypto.createHash("sha1").update(url).digest("hex").slice(0, 16);
     const prev = byId.get(id);
     const sameLoc = prev && prev.location === item.location;
     const coords = sameLoc && prev.lat != null ? { lat: prev.lat, lng: prev.lng! } : await geocode(item.location, cache);
+    if (coords && !inEurope(coords)) continue;
 
     const listing: Listing = {
       id,
@@ -283,7 +288,12 @@ async function merge() {
 
   const cutoff = Date.now() - KEEP_DAYS * 86_400_000;
   const listings = [...byId.values()].filter((l) => Date.parse(l.lastSeen) >= cutoff);
-  writeDb({ updatedAt: now, listings });
+  save(`Saving ${listings.length} listings…`);
+  if (hasSupabase()) {
+    await saveListings(listings);
+    await deleteOlderThan(new Date(cutoff).toISOString());
+  }
+  writeDb({ updatedAt: now, listings }); // local copy / fallback
   return listings.length;
 }
 

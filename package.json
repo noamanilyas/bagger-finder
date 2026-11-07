@@ -10,8 +10,11 @@
     "scrape": "tsx scraper/run.ts",
     "typecheck": "tsc --noEmit"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
     "crawlee": "^3.11.0",
     "leaflet": "^1.9.4",
     "next": "^15.0.0",

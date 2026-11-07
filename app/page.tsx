@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DEFAULT_LIMITS } from "@/lib/config";
 import type { Listing, Status } from "@/lib/types";
 
 const Map = dynamic(() => import("@/components/Map"), {
@@ -45,13 +46,21 @@ function sorter(key: SortKey): (a: Listing, b: Listing) => number {
 
 const eur = (n: number) => `€${n.toLocaleString("de-DE")}`;
 
+/** So "b55w" finds "B 55W-2" and "robex 55" finds "ROBEX55W-9A". */
+const squash = (s: string) => s.toLowerCase().replace(/[\s-]/g, "");
+
+/** A filter box holds digits; empty means no limit. */
+const limitOf = (s: string) => parseInt(s, 10) || null;
+
 export default function Home() {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("newest");
   const [models, setModels] = useState<Set<string>>(new Set());
   const [source, setSource] = useState("all");
-  const [maxPrice, setMaxPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState(String(DEFAULT_LIMITS.maxPrice ?? ""));
+  const [maxYear, setMaxYear] = useState(String(DEFAULT_LIMITS.maxYear ?? ""));
+  const [modelText, setModelText] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [wheeledOnly, setWheeledOnly] = useState(true);
@@ -78,23 +87,34 @@ export default function Home() {
   }, [running, load]);
 
   const refresh = async () => {
-    await fetch("/api/scrape", { method: "POST" });
-    void load();
+    const res = await fetch("/api/scrape", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxPrice: limitOf(maxPrice), maxYear: limitOf(maxYear) }),
+    });
+    const result = (await res.json().catch(() => null)) as { started?: boolean; reason?: string } | null;
+    await load();
+    if (result && !result.started) setError(`Not started: ${result.reason ?? "try again shortly."}`);
   };
 
   const sources = useMemo(() => [...new Set((data?.listings ?? []).map((l) => l.source))].sort(), [data]);
 
   const visible = useMemo(() => {
-    const max = parseInt(maxPrice, 10);
+    const max = limitOf(maxPrice);
+    const yearMax = limitOf(maxYear);
+    const modelQ = squash(modelText);
     const q = query.trim().toLowerCase();
     return (data?.listings ?? [])
       .filter((l) => models.size === 0 || models.has(l.modelKey))
       .filter((l) => !wheeledOnly || l.wheeled)
       .filter((l) => source === "all" || l.source === source)
-      .filter((l) => isNaN(max) || (l.priceEur != null && l.priceEur <= max))
+      // an unknown price or year stays visible, same as in the scraper
+      .filter((l) => max == null || l.priceEur == null || l.priceEur <= max)
+      .filter((l) => yearMax == null || l.year == null || l.year <= yearMax)
+      .filter((l) => !modelQ || squash(`${l.title} ${l.make ?? ""} ${l.model ?? ""}`).includes(modelQ))
       .filter((l) => !q || `${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
       .sort(sorter(sort));
-  }, [data, models, source, maxPrice, query, sort, wheeledOnly]);
+  }, [data, models, source, maxPrice, maxYear, modelText, query, sort, wheeledOnly]);
 
   const select = useCallback((id: string) => {
     setSelected(id);
@@ -110,6 +130,10 @@ export default function Home() {
     });
 
   const failed = Object.entries(data?.status.sources ?? {}).filter(([, s]) => !s.ok);
+  const pagesDone = data?.status.pagesDone ?? 0;
+  const pagesTotal = data?.status.pagesTotal ?? 0;
+  const lastActivity = data?.status.lastActivity;
+  const quietSeconds = lastActivity ? Math.max(0, Math.round((Date.now() - Date.parse(lastActivity)) / 1000)) : 0;
 
   return (
     <div className="app">
@@ -121,14 +145,28 @@ export default function Home() {
             {data?.updatedAt && ` · updated ${new Date(data.updatedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}`}
           </div>
         </div>
-        <button onClick={() => void refresh()} disabled={running} className="btn">
+        <button onClick={() => void refresh()} disabled={running} className="btn" title="Scrapes using the Max € and Max year set in the filters">
+
           {running ? "Scraping…" : "Refresh now"}
         </button>
       </header>
 
-      {data && (running || failed.length > 0) && (
+      {data && running && (
+        <div className="notice" role="status">
+          <div>{data.status.message}</div>
+          {pagesTotal > 0 && <progress value={pagesDone} max={pagesTotal} style={{ width: "100%" }} aria-label="Pages read" />}
+          <div className="sub">
+            {pagesTotal > 0 && `${pagesDone} of ${pagesTotal} pages done · `}
+            {quietSeconds >= 120
+              ? `no progress for ${Math.round(quietSeconds / 60)} min, it may be stuck (a new scrape is allowed after 10 min)`
+              : `last update ${quietSeconds}s ago`}
+            {" · safe to close this tab; the list updates when it finishes"}
+          </div>
+        </div>
+      )}
+      {data && !running && failed.length > 0 && (
         <div className="notice">
-          {running ? data.status.message : `${failed.length} source(s) failed: ${failed.map(([id, s]) => `${id} (${s.error ?? "error"})`).join("; ")}`}
+          {`${failed.length} source(s) failed: ${failed.map(([id, s]) => `${id} (${s.error ?? "error"})`).join("; ")}`}
         </div>
       )}
       {error && <div className="notice err">{error}</div>}
@@ -153,7 +191,19 @@ export default function Home() {
                 inputMode="numeric"
                 placeholder="Max €"
                 value={maxPrice}
+                aria-label="Max price in euros"
                 onChange={(e) => setMaxPrice(e.target.value.replace(/\D/g, ""))}
+              />
+            </div>
+            <div className="row">
+              <input placeholder="Model, e.g. B55W" aria-label="Model" value={modelText} onChange={(e) => setModelText(e.target.value)} />
+              <input
+                className="narrow"
+                inputMode="numeric"
+                placeholder="Max year"
+                aria-label="Max year"
+                value={maxYear}
+                onChange={(e) => setMaxYear(e.target.value.replace(/\D/g, ""))}
               />
             </div>
             <div className="row">

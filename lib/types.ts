@@ -39,6 +39,11 @@ export type Status = {
   startedAt: string | null;
   finishedAt: string | null;
   message: string;
+  /** progress of the running scrape */
+  pagesDone?: number;
+  pagesTotal?: number;
+  /** when the scraper last reported real progress: used to spot a hung run */
+  lastActivity?: string;
   extractor: "ai" | "heuristic" | null;
   sources: Record<string, SourceResult>;
 };

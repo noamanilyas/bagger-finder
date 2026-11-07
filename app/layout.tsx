@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Bagger Finder",
-  description: "Used Yanmar, Doosan and Hyundai excavators in Germany on one map",
+  description: "Used Yanmar, Doosan and Hyundai excavators across Europe on one map",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

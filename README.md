@@ -1,6 +1,6 @@
 # Bagger Finder
 
-Finds used excavators in Germany — **Yanmar 55, Doosan DX55, Doosan DX140, Hyundai 140, Hyundai 55** — on several
+Finds used excavators across Europe — **Yanmar 55 (including the wheeled B55W), Doosan DX55, Doosan DX140, Hyundai 140, Hyundai 55** — on several
 marketplaces and shows them on a map: list with sorting and filters on the left, map on the right.
 
 ## How it works

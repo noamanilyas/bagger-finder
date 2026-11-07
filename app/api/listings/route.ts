@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
 import { readDb, readStatus } from "@/lib/store";
 import { isRunning } from "@/lib/trigger";
+import { hasSupabase, loadListings } from "@/lib/supabase";
 import { WANTED } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
-export function GET() {
+export async function GET() {
   const db = readDb();
+  let listings = db.listings;
+  if (hasSupabase()) {
+    try {
+      listings = await loadListings();
+    } catch (e) {
+      console.warn(`[api] ${(e as Error).message} — using local copy`);
+    }
+  }
   const status = readStatus();
   return NextResponse.json({
     updatedAt: db.updatedAt,
-    listings: db.listings,
+    listings,
     models: WANTED.map((m) => ({ key: m.key, label: m.label })),
     status: { ...status, running: isRunning() },
   });
