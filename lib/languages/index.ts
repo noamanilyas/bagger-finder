@@ -14,18 +14,21 @@ import { cs } from "./cs";
 import { da } from "./da";
 import { de } from "./de";
 import { en } from "./en";
+import { fi } from "./fi";
 import { fr } from "./fr";
 import { hu } from "./hu";
+import { it } from "./it";
 import { nl } from "./nl";
 import { no } from "./no";
 import { pl } from "./pl";
 import { ro } from "./ro";
 import { sk } from "./sk";
+import { sv } from "./sv";
 import type { LangCode, Language, Term } from "./types";
 
 export type { LangCode, Language, Term } from "./types";
 
-export const LANGUAGES: Record<LangCode, Language> = { de, en, pl, nl, fr, cs, sk, hu, ro, no, da };
+export const LANGUAGES: Record<LangCode, Language> = { de, en, pl, nl, fr, cs, sk, hu, ro, no, da, sv, fi, it };
 
 /** What a source is assumed to be written in when it does not say. */
 export const DEFAULT_LANGUAGES: LangCode[] = ["de"];
@@ -120,7 +123,8 @@ export function fieldsFor(codes: LangCode[]): FieldPatterns {
     const hours = compile(languages, (l) => l.labels.hours);
     found = {
       year: new RegExp(String.raw`(?:${year})\s*:?\s*${YEAR}`, "iu"),
-      hours: new RegExp(String.raw`(?:${hours})\s*:?\s*(?:ca\.\s*)?${NUMBER}|(?<![\d.,])${NUMBER}\s*(?:${hours})`, "iu"),
+      // A number before a label only when no colon follows: in "Årgang: 2016 Timer: 4100" the hours are 4100, not 2016.
+      hours: new RegExp(String.raw`(?:${hours})\s*:?\s*(?:ca\.\s*)?${NUMBER}|(?<![\d.,])${NUMBER}\s*(?:${hours})(?!\s*:)`, "iu"),
     };
     fieldCache.set(key, found);
   }

@@ -2,7 +2,30 @@ import { isSaleAd } from "./market";
 import type { Listing } from "./types";
 
 /** The newest history row of a listing: all that is needed to spot a change. */
-export type HistoryHead = { id: number; listingId: string; priceEur: number | null; hours: number | null };
+export type HistoryHead = {
+  id: number;
+  listingId: string;
+  priceEur: number | null;
+  hours: number | null;
+  /** the price in the site's own currency; undefined when the database has no such column yet */
+  priceAmount?: number | null;
+};
+
+/** Below this, a change in the euro value of a price in another currency is the exchange rate moving, not the seller. */
+const RATE_NOISE = 0.03;
+
+/**
+ * A changed price. For prices in another currency the seller's own amount counts: the euro value moves with the rate
+ * every day, and that is no change. Without the stored amount, only a move larger than the rate's daily wobble counts.
+ */
+export function priceChanged(l: Pick<Listing, "priceEur" | "priceAmount" | "priceCurrency">, head: HistoryHead): boolean {
+  if (l.priceCurrency && l.priceAmount != null) {
+    if (head.priceAmount != null) return l.priceAmount !== head.priceAmount;
+    if (l.priceEur == null || head.priceEur == null) return false;
+    return Math.abs(l.priceEur - head.priceEur) > head.priceEur * RATE_NOISE;
+  }
+  return l.priceEur != null && l.priceEur !== head.priceEur;
+}
 
 export type HistoryPlan = {
   /** first appearance, or a changed price or hours */
@@ -31,7 +54,7 @@ export function planHistory(listings: Listing[], heads: HistoryHead[], now: stri
       continue;
     }
     if (l.lastSeen !== now) continue; // not on the sites this time
-    const changed = (l.priceEur != null && l.priceEur !== head.priceEur) || (l.hours != null && l.hours !== head.hours);
+    const changed = priceChanged(l, head) || (l.hours != null && l.hours !== head.hours);
     if (changed) plan.insert.push({ listing: l, firstSeen: now, lastSeen: now });
     else plan.touch.push(head.id);
   }

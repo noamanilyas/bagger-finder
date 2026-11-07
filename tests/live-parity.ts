@@ -3,7 +3,7 @@
  * Run with `npm run test:live` after changing the German word list: anything under LOST needs a good reason.
  */
 import { CheerioCrawler, Configuration } from "crawlee";
-import { SOURCES, isWheeled, matchModel } from "../lib/config";
+import { SOURCES, isWheeled, matchModel, seedUrls } from "../lib/config";
 import { collectBlocksCheerio } from "../scraper/cards";
 import type { Block } from "../scraper/extract";
 import { legacyIsWheeled, legacyMatchModel } from "./legacy-filters";
@@ -28,7 +28,7 @@ async function cardsOf(id: string): Promise<Block[]> {
     },
     new Configuration({ persistStorage: false }),
   );
-  await crawler.run(source.urls(false).slice(0, PAGES_PER_SOURCE));
+  await crawler.run(seedUrls(source, false).slice(0, PAGES_PER_SOURCE));
   return cards;
 }
 

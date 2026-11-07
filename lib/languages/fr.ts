@@ -11,7 +11,7 @@ export const fr: Language = {
   roller: ["rouleau*", "compacteur*"],
   weakExcavator: ["pelle", "pelles"],
   // Never plain "location" anywhere in an ad: it means rental here, but cards also say "Location: Germany".
-  notForSale: ["à louer", "en location", "louer", "par jour", "je recherche", "cherche", "chariot élévateur*"],
+  notForSale: ["à louer", "en location", "louer", "par jour", "je recherche", "cherche", "recherché", "recherchée", "recherchons", "chariot élévateur*"],
   // "pneu" at the start is a tyre ad; "pelle sur pneus" further on is the machine we want.
   partAtStart: ["location", "pneu*", "jante*", "chenille*", "godet*", "moteur*", "pièce*", "vérin*", "attache rapide", "pompe hydraulique"],
   labels: { year: ["année", "annee"], hours: ["heures", "heure"] },
@@ -20,6 +20,6 @@ export const fr: Language = {
   examples: {
     wheeled: ["Pelle sur pneus Hyundai R140W-7", "Pelle a pneu Doosan DX140W", "Pelleteuse sur pneus Hyundai Robex 140W"],
     keep: ["Pelle Hyundai R140, pneus neufs"],
-    drop: ["Location pelle Doosan DX140", "Pelle Hyundai R140 à louer", "Pneus pour pelle Hyundai R140W", "Godet pour pelle Doosan DX55"],
+    drop: ["Recherché : pelle Doosan DX55", "Location pelle Doosan DX140", "Pelle Hyundai R140 à louer", "Pneus pour pelle Hyundai R140W", "Godet pour pelle Doosan DX55"],
   },
 };

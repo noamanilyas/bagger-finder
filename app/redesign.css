@@ -306,3 +306,6 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-line
 @media (min-width: 801px) {
   .split { grid-template-columns: minmax(360px, 480px) 1fr; }
 }
+
+/* the site's own price under the euro value, for ads in other currencies */
+.price .orig { display: block; font-size: 11px; font-weight: 400; opacity: 0.7; text-align: right; }

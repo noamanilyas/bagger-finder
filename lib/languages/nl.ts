@@ -11,15 +11,16 @@ export const nl: Language = {
   loader: ["wiellader*"],
   roller: ["*wals", "*walsen"],
   // Not "verhuur": dealers are called "XYZ Verkoop en Verhuur".
-  notForSale: ["te huur", "huren", "per dag", "per week", "gevraagd", "gezocht", "*heftruck*"],
+  // Parts sold with a machine's name in them ("ruilpomp tbv Hyundai Robex 140W-9"), and wanted ads.
+  notForSale: ["te huur", "huren", "per dag", "per week", "gevraagd", "gezocht", "op zoek naar", "opzoek naar", "*heftruck*", "ruilpomp", "ruilunit", "hoofdpomp", "versnellingsbak"],
   // "banden" means tyres, but "bandenkraan" is exactly the machine we want.
   partAtStart: [/banden?(?!\p{L})(?![\s-]*kraan)/u, "verhuur", "onderdelen", "velg*", "rupsen", "graafbak*", "bak", "motor", "snelwissel*", "hydrauliekpomp*", "cilinder*"],
-  labels: { year: ["bouwjaar"], hours: ["draaiuren", "bedrijfsuren", "uren"] },
+  labels: { year: ["bouwjaar", "bj"], hours: ["draaiuren", "bedrijfsuren", "uren", "uur"] },
   searchWords: ["bandenkraan", "mobiele graafmachine"],
   acceptCookies: ["Alles accepteren", "Accepteren", "Akkoord"],
   examples: {
     wheeled: ["Bandenkraan Hyundai R140W-7", "Banden kraan Doosan DX140W", "Mobiele graafmachine Hyundai Robex 140W"],
     keep: ["Graafmachine Hyundai R140 van Janssen Verhuur"],
-    drop: ["Doosan DX140 graafmachine te huur", "Banden voor Hyundai R140W graafmachine", "Onderdelen Doosan DX55 graver"],
+    drop: ["Doosan DX140 graafmachine te huur", "Banden voor Hyundai R140W graafmachine", "Onderdelen Doosan DX55 graver", "Kawasaki ruilpomp tbv Hyundai Robex 140W-9 graafmachine"],
   },
 };

@@ -1,4 +1,4 @@
-export type LangCode = "de" | "en" | "pl" | "nl" | "fr" | "cs" | "sk" | "hu" | "ro" | "no" | "da";
+export type LangCode = "de" | "en" | "pl" | "nl" | "fr" | "cs" | "sk" | "hu" | "ro" | "no" | "da" | "sv" | "fi" | "it";
 
 /**
  * One word or phrase. A string matches as whole words, in any case:

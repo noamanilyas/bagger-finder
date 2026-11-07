@@ -24,3 +24,8 @@ services:
         sync: false # https://<your Render address>/callback
       - key: ALLOWED_EMAILS
         sync: false
+      # mobile.de's Search-API, once it grants an API-Account. Without these mobile.de is skipped.
+      - key: MOBILE_DE_API_USER
+        sync: false
+      - key: MOBILE_DE_API_PASSWORD
+        sync: false

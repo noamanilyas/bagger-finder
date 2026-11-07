@@ -14,6 +14,13 @@ Finds used construction machines across Europe on several marketplaces:
 
 The list lives in `lib/config.ts`. Results are shown on a map: list with sorting and filters on the left, map on the right.
 
+**Where it looks:** the portals Mascus, Machineryline, Truck1, Europe-Construction-Equipment, TruckScout24 and
+Maschinensucher, plus Kleinanzeigen, and national sites across Europe: Landwirt.com (AT), Marktplaats (NL), 2dehands and
+2ememain (BE), Bazoš (CZ, SK), Otomoto (PL), Autovit (RO), Jófogás and Agroinform (HU), FINN (NO), DBA and Maskinbladet
+(DK), Blocket (SE), Nettikone (FI), Subito (IT), Leboncoin (FR) and Autotrader Plant (UK). mobile.de joins through its
+official Search-API once mobile.de grants an API-Account (see below). Prices in other currencies are shown in euros at the
+day's rate, with the site's own price next to them.
+
 ## How it works
 
 | Part | Tech |
@@ -74,7 +81,9 @@ Without `WORKOS_CLIENT_ID` the site is open for local use, and production refuse
 ### Add a marketplace
 
 1. Add a `Source` to `lib/config.ts` with `enabled: false`, `spacedText: true`, its `languages`, and an `isListing` test
-   so only real ads count. Set `defaultCountry` for a national site, or `null` when ads come from all over.
+   so only real ads count. Set `defaultCountry` for a national site, or `null` when ads come from all over, and
+   `currency` when its prices are not in euros. A national site can copy one of the others: `...NATIONAL` and `paged`
+   searches, which read the next page only while the last one had new ads.
 2. Try it. This reads the site without saving anything and without AI:
    ```bash
    npm run try-source -- mysite              # what would be kept or turned down, and why
@@ -83,7 +92,8 @@ Without `WORKOS_CLIENT_ID` the site is open for local use, and production refuse
    ```
 3. The AI model reads any layout, but it has a limit per run, so also add a parser to `scraper/parsers.ts` for the
    rest. Copy real cards into `tests/parsers.test.ts`.
-4. Check the site's `robots.txt`. Set `ai: false` if it asks that its content is not used with AI.
+4. Check the site's `robots.txt` (the scraper also reads it on every run, skips what it disallows and keeps its
+   `Crawl-delay`) and its terms of use. Set `ai: false` if it asks that its content is not used with AI.
 5. Set `enabled: true`.
 
 ### Add a language
@@ -108,4 +118,18 @@ Country names are in `lib/countries.ts`.
 Notes:
 - Render's free plan has 512 MB RAM and an ephemeral disk: Chromium is memory hungry (~800 MB seen), so it is only used as a fallback (use the Standard plan and `USE_BROWSER=true` if sites need it) and `data/` is wiped on each deploy (attach a disk and set `DATA_DIR` to keep history).
 - Free OpenRouter models are limited (about 20 requests/min and 200/day per model); a scrape uses a few dozen requests, so a scrape every 6 hours fits.
-- Check each marketplace's terms of use and robots.txt; the crawler is deliberately slow (1 page at a time, ≤20/min).
+- Check each marketplace's terms of use and robots.txt; the crawler is deliberately slow: one page at a time per site,
+  3 seconds apart or the site's Crawl-delay, six sites side by side.
+- A site that refuses (HTTP 401, 403, 429 or a bot check page) gets no more pages that run and is never retried in the
+  browser. It rests a day, then twice as long each time it refuses again, up to a week (table `source_health`).
+- New places are looked up on the map at most 300 per run (Nominatim allows one a second); the rest follow next run.
+- Run `supabase/schema.sql` again after updating: it adds the original-price columns and `source_health`. Until then the
+  scraper still works, keeping euro values only.
+
+### mobile.de
+
+Its website refuses the crawler and its robots.txt closes the search pages, so it is read only through the official
+[Search-API](https://services.mobile.de/docs/search-api.html). That needs an API-Account, which mobile.de's customer
+support activates. Once you have the credentials, set `MOBILE_DE_API_USER` and `MOBILE_DE_API_PASSWORD` and check the
+first results with `npm run try-source -- mobile-de`: the client was written from the documentation before any access
+existed, so field names may need adjusting.

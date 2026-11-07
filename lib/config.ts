@@ -3,6 +3,7 @@
  * Words in other languages live in lib/languages, country names in lib/countries.ts.
  */
 import { withinBudget } from "./costs";
+import type { Currency } from "./currency";
 import { DEFAULT_LANGUAGES, EXCAVATOR_WORD, GRADER_WORD, LOADER_WORD, ROLLER_WORD, TRACKED_WORD, WHEELED_WORD, exclusionsFor, type LangCode } from "./languages";
 
 export type WantedModel = {
@@ -284,12 +285,29 @@ function machinerylinePages(mobileOnly: boolean): string[] {
   ];
 }
 
+/** One search whose pages are read in turn: the next page only while the last one had new ads, up to maxPages. */
+export type PagedSearch = { page: (n: number) => string; maxPages: number };
+
 export type Source = {
   id: string;
   name: string;
   enabled: boolean;
-  /** search/listing page URLs to crawl for this source */
-  urls: (mobileOnly: boolean) => string[];
+  /** search/listing page URLs to crawl for this source, all of them every run */
+  urls?: (mobileOnly: boolean) => string[];
+  /** searches read page by page, stopping at the first page without new ads: no fixed page counts to keep up to date */
+  paged?: (mobileOnly: boolean) => PagedSearch[];
+  /** the currency of the site's prices; "kr" alone means NOK, DKK or SEK depending on the site. EUR when not set */
+  currency?: Currency;
+  /** seconds between two pages of this site (default 3); a Crawl-delay in its robots.txt raises it */
+  delaySecs?: number;
+  /** false: a page that fails or looks empty is not tried again in the browser. Sites that refused are never retried there */
+  browserFallback?: boolean;
+  /** read through an official API instead of web pages (see scraper/mobile-de-api.ts), so the crawler skips it */
+  api?: boolean;
+  /** characters of a card's text kept (default 600). Sites whose cards end with the seller's town need more */
+  cardChars?: number;
+  /** ad addresses carry tracking that changes per page: drop the query so an ad keeps one id */
+  stripQuery?: boolean;
   /** when set, only links passing this test can become listings (drops filter links, rentals and so on) */
   isListing?: (url: string) => boolean;
   /** what the ads are written in: chooses the exclusions and field labels (see lib/languages) */
@@ -306,8 +324,93 @@ export type Source = {
   ai?: boolean;
 };
 
-const dash =(q: string) => q.trim().toLowerCase().replace(/\s+/g, "-");
+const dash = (q: string) => q.trim().toLowerCase().replace(/\s+/g, "-");
 const range = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+
+/** The first page of every search of a source: what a run starts with. */
+export function seedUrls(source: Source, mobileOnly: boolean): string[] {
+  return [...(source.urls?.(mobileOnly) ?? []), ...(source.paged?.(mobileOnly) ?? []).map((s) => s.page(1))];
+}
+
+/**
+ * What the national sites search for, inside their machinery section only: "hyundai" anywhere else finds cars.
+ * Makes whose machines are all of interest are searched whole; for the big makes only the wanted models are, or every
+ * Volvo, Cat and JCB machine would be read.
+ */
+export const NATIONAL_QUERIES = [
+  "doosan",
+  "develon",
+  "daewoo",
+  "hyundai",
+  "yanmar",
+  "hitachi",
+  "samsung",
+  "dynapac",
+  "volvo ew170",
+  "jcb js140",
+  "jcb js145",
+  "cat 966",
+  "cat 970",
+  "cat 972",
+  "cat 980",
+  "cat 120",
+  "cat 130",
+  "cat 140",
+];
+
+/** Most of these sites read 20 to 50 ads per page, so 6 pages are plenty for one make inside the machinery section. */
+const NATIONAL_MAX_PAGES = 6;
+
+/** One paged search per query. `page(q, n)` builds the address of page n. */
+const searchesFor = (page: (q: string, n: number) => string, maxPages = NATIONAL_MAX_PAGES, queries = NATIONAL_QUERIES): PagedSearch[] =>
+  queries.map((q) => ({ page: (n: number) => page(q, n), maxPages }));
+
+const plusQuery = (q: string) => encodeURIComponent(q).replace(/%20/g, "+");
+const dashQuery = (q: string) => encodeURIComponent(q.replace(/\s+/g, "-"));
+
+/**
+ * For sites without a machinery section to search in: makes that also build cars get the local word for excavator, or
+ * "hyundai" would read pages of cars. The model filters would turn those down anyway; this keeps the pages useful.
+ */
+const withMachineWord = (word: string) =>
+  NATIONAL_QUERIES.flatMap((q) => (["hyundai", "daewoo", "samsung"].includes(q) ? [`${q} ${word}`, ...(q === "hyundai" ? ["hyundai robex"] : [])] : [q]));
+
+/** Landwirt.com: one page per category and make, as the site's own make filter. */
+function landwirtSearches(mobileOnly: boolean): PagedSearch[] {
+  const pairs: [string, string[]][] = [
+    ["mobilbagger", ["doosan", "develon", "daewoo", "hyundai", "yanmar", "hitachi", "volvo", "samsung", "jcb"]],
+    ["kettenbagger", ["doosan", "develon", "daewoo", "hitachi", "jcb", ...(mobileOnly ? [] : ["hyundai"])]],
+    ["minibagger", ["hitachi", ...(mobileOnly ? [] : ["doosan", "hyundai", "yanmar"])]],
+    ["radlader", ["cat"]],
+    ["grader", ["cat"]],
+    ["walzen", ["dynapac"]],
+  ];
+  return pairs.flatMap(([category, makes]) =>
+    makes.map((make) => ({
+      page: (n: number) => `https://www.landwirt.com/baumaschinen/${category}/${make}${n > 1 ? `?page=${n}` : ""}`,
+      maxPages: 5,
+    })),
+  );
+}
+
+/**
+ * What every national site shares: words kept apart, regex parsers only (some ask in robots.txt not to be used for AI,
+ * and it keeps the AI budget for the portals), no browser retries, and room for the seller's town at a card's end.
+ */
+const NATIONAL = { spacedText: true, ai: false, browserFallback: false, cardChars: 900 } as const;
+
+/** Marktplaats, 2dehands and 2ememain run on one platform: a category, a query, then /p/N/. */
+const adevinta = (host: string, category: string) =>
+  searchesFor((q, n) => `https://${host}/l/${category}/q/${plusQuery(q)}/${n > 1 ? `p/${n}/` : ""}`);
+const adevintaListing = (host: string) => (url: string) => new RegExp(String.raw`^https://${host.replace(/\./g, "\\.")}/v/[^?#]+/m\d+-`).test(url);
+
+/** FINN, DBA and Blocket run on one platform as well (Vend). */
+const vendListing = (host: string) => (url: string) =>
+  new RegExp(String.raw`^https://${host.replace(/\./g, "\\.")}/(?:mobility|recommerce/forsale)/item/\d+(?:[?#]|$)`).test(url);
+
+/** Otomoto and Autovit: OLX Group's vehicle sites, with the same layout. */
+const olxGroupListing = (host: string, section: string) => (url: string) =>
+  new RegExp(String.raw`^https://${host.replace(/\./g, "\\.")}/${section}/(?:oferta|anunt)/[^?#]+-ID[A-Za-z0-9]+\.html`).test(url);
 
 /**
  * Maschinensucher's /mss/ pages by model mostly answer 404, and those that exist show loose matches, so read the
@@ -620,5 +723,242 @@ export const SOURCES: Source[] = [
       }).flatMap(([path, pages]) =>
         range(pages).map((n) => `https://www.truck1.eu/construction-machinery/${path}${n > 1 ? `?page=${n}` : ""}`),
       ),
+  },
+
+  // ---- National sites (reports/Used wheel excavator sources Europe.md), checked on 2026-11-07 ------------------
+  // All use the regex parsers only (ai: false): some ask in robots.txt not to be used for AI, and it keeps the
+  // AI budget for the portals. Each one's searches page on demand, so no page counts need keeping up to date.
+  {
+    id: "landwirt",
+    name: "Landwirt.com",
+    enabled: true,
+    languages: ["de"],
+    defaultCountry: "Österreich",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/www\.landwirt\.com\/detail\/[a-z0-9-]+-\d{5,}(?:[?#]|$)/.test(url),
+    paged: landwirtSearches,
+  },
+  {
+    id: "marktplaats",
+    name: "Marktplaats",
+    enabled: true,
+    languages: ["nl"],
+    defaultCountry: "Nederland",
+    ...NATIONAL,
+    cardChars: 1400, // the town comes after a long description
+    isListing: adevintaListing("www.marktplaats.nl"),
+    paged: () => adevinta("www.marktplaats.nl", "zakelijke-goederen/machines-en-bouw-kranen-en-graafmachines"),
+  },
+  {
+    id: "2dehands",
+    name: "2dehands",
+    enabled: true,
+    languages: ["nl"],
+    defaultCountry: "België",
+    ...NATIONAL,
+    cardChars: 1400,
+    isListing: adevintaListing("www.2dehands.be"),
+    paged: () => adevinta("www.2dehands.be", "zakelijke-goederen/machines-en-bouw-kranen-en-graafmachines"),
+  },
+  {
+    id: "2ememain",
+    name: "2ememain",
+    enabled: true,
+    languages: ["fr", "nl"],
+    defaultCountry: "Belgique",
+    ...NATIONAL,
+    cardChars: 1400,
+    isListing: adevintaListing("www.2ememain.be"),
+    paged: () => adevinta("www.2ememain.be", "articles-professionnels/machines-construction-grues-excavatrices"),
+  },
+  {
+    // Searches are paths (robots.txt closes ?hledat=), one page of 40 ads each: Bazos has no allowed next page.
+    id: "bazos-cz",
+    name: "Bazoš.cz",
+    enabled: true,
+    languages: ["cs"],
+    defaultCountry: "Česko",
+    currency: "CZK",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/stroje\.bazos\.cz\/inzerat\/\d+\//.test(url),
+    paged: () => searchesFor((q) => `https://stroje.bazos.cz/inzeraty/${dashQuery(q)}/`, 1),
+  },
+  {
+    id: "bazos-sk",
+    name: "Bazoš.sk",
+    enabled: true,
+    languages: ["sk"],
+    defaultCountry: "Slovensko",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/stroje\.bazos\.sk\/inzerat\/\d+\//.test(url),
+    paged: () => searchesFor((q) => `https://stroje.bazos.sk/inzeraty/${dashQuery(q)}/`, 1),
+  },
+  {
+    id: "otomoto",
+    name: "Otomoto",
+    enabled: true,
+    languages: ["pl"],
+    defaultCountry: "Polska",
+    currency: "PLN",
+    ...NATIONAL,
+    isListing: olxGroupListing("www.otomoto.pl", "maszyny-budowlane"),
+    paged: () => searchesFor((q, n) => `https://www.otomoto.pl/maszyny-budowlane/q-${dashQuery(q)}${n > 1 ? `?page=${n}` : ""}`),
+  },
+  {
+    id: "autovit",
+    name: "Autovit",
+    enabled: true,
+    languages: ["ro"],
+    defaultCountry: "România",
+    currency: "RON",
+    ...NATIONAL,
+    isListing: olxGroupListing("www.autovit.ro", "utilaje-constructii"),
+    paged: () => searchesFor((q, n) => `https://www.autovit.ro/utilaje-constructii/q-${dashQuery(q)}${n > 1 ? `?page=${n}` : ""}`),
+  },
+  {
+    // robots.txt bars AI training bots from the ad pages, and allows only ?o=1 to 9.
+    id: "jofogas",
+    name: "Jófogás Auto",
+    enabled: true,
+    languages: ["hu"],
+    defaultCountry: "Magyarország",
+    currency: "HUF",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/auto\.jofogas\.hu\/[a-z_]+\/[^/?#]+_\d{6,}\.htm/.test(url),
+    paged: () =>
+      searchesFor((q, n) => `https://auto.jofogas.hu/magyarorszag/jarmu?q=${plusQuery(q)}${n > 1 ? `&o=${n}` : ""}`, 5, withMachineWord("kotró")),
+  },
+  {
+    // robots.txt: Crawl-delay 10 and ai-train=no. The site has no search inside a category, so the excavator category is read whole.
+    id: "agroinform",
+    name: "Agroinform",
+    enabled: true,
+    languages: ["hu"],
+    defaultCountry: "Magyarország",
+    currency: "HUF",
+    delaySecs: 10,
+    ...NATIONAL,
+    stripQuery: true, // its ad links carry a ?ref= that changes from page to page
+    isListing: (url) => /^https:\/\/www\.agroinform\.hu\/aprohirdetes_adatlap\/[^?#]+\/h_\d+/.test(url),
+    paged: () => [
+      {
+        page: (n: number) =>
+          `https://www.agroinform.hu/aprohirdetes/gep/rakodogepek-es-epitoipari-gepek/onjaro-forgogemes-rakodo-10991/${n > 1 ? `oldal:${n}/c3l1` : "c3"}`,
+        maxPages: 12,
+      },
+    ],
+  },
+  {
+    // The dealer section: the consumer one is mostly parts and toys (report).
+    id: "finn",
+    name: "FINN",
+    enabled: true,
+    languages: ["no"],
+    defaultCountry: "Norge",
+    currency: "NOK",
+    ...NATIONAL,
+    isListing: vendListing("www.finn.no"),
+    paged: () => searchesFor((q, n) => `https://www.finn.no/mobility/search/b2b/construction?q=${plusQuery(q)}${n > 1 ? `&page=${n}` : ""}`),
+  },
+  {
+    id: "dba",
+    name: "DBA",
+    enabled: true,
+    languages: ["da"],
+    defaultCountry: "Danmark",
+    currency: "DKK",
+    ...NATIONAL,
+    isListing: vendListing("www.dba.dk"),
+    paged: () =>
+      searchesFor((q, n) => `https://www.dba.dk/recommerce/forsale/search?q=${plusQuery(q)}${n > 1 ? `&page=${n}` : ""}`, 3, withMachineWord("gravemaskine")),
+  },
+  {
+    id: "blocket",
+    name: "Blocket",
+    enabled: true,
+    languages: ["sv"],
+    defaultCountry: "Sverige",
+    currency: "SEK",
+    ...NATIONAL,
+    isListing: vendListing("www.blocket.se"),
+    paged: () => searchesFor((q, n) => `https://www.blocket.se/mobility/search/b2b/construction?q=${plusQuery(q)}${n > 1 ? `&page=${n}` : ""}`),
+  },
+  {
+    // The construction machine category: free text alone does not narrow results here (report).
+    id: "maskinbladet",
+    name: "Maskinbladet",
+    enabled: true,
+    languages: ["da"],
+    defaultCountry: "Danmark",
+    currency: "DKK",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/www\.maskinbladet\.dk\/maskiner\/[a-z0-9-]+\/[a-z0-9-]+-d[0-9a-f]{8}-[0-9a-f-]+$/i.test(url),
+    paged: () =>
+      searchesFor(
+        (q, n) => `https://www.maskinbladet.dk/maskiner/entrepren-rmaskiner-cf268d600-625f-4650-ab91-b3cfef4c9f0d?query=${plusQuery(q)}${n > 1 ? `&p=${n}` : ""}`,
+      ),
+  },
+  {
+    // Machines only, so a make page holds no cars. The big makes are left out: their pages are mostly other machines.
+    id: "nettikone",
+    name: "Nettikone",
+    enabled: true,
+    languages: ["fi"],
+    defaultCountry: "Suomi",
+    ...NATIONAL,
+    // Only the plain address: the same card also links to "#video_show" and "?video_display=Y".
+    isListing: (url) => /^https:\/\/www\.nettikone\.com\/[a-z0-9-]+\/[a-z0-9-]+\/\d{5,}$/.test(url),
+    paged: () =>
+      ["doosan", "develon", "daewoo", "hyundai", "yanmar", "hitachi", "samsung", "dynapac"].map((make) => ({
+        page: (n: number) => `https://www.nettikone.com/${make}${n > 1 ? `?page=${n}` : ""}`,
+        maxPages: NATIONAL_MAX_PAGES,
+      })),
+  },
+  {
+    id: "subito",
+    name: "Subito",
+    enabled: true,
+    languages: ["it"],
+    defaultCountry: "Italia",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/www\.subito\.it\/[a-z-]+\/[^?#]+-\d{7,}\.htm/.test(url),
+    paged: () =>
+      searchesFor((q, n) => `https://www.subito.it/annunci-italia/vendita/usato/?q=${plusQuery(q)}${n > 1 ? `&o=${n}` : ""}`, 3, withMachineWord("escavatore")),
+  },
+  {
+    id: "leboncoin",
+    name: "Leboncoin",
+    enabled: true,
+    languages: ["fr"],
+    defaultCountry: "France",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/www\.leboncoin\.fr\/ad\/[a-z_]+\/\d+(?:[?#]|$)/.test(url),
+    paged: () => searchesFor((q, n) => `https://www.leboncoin.fr/ck/btp_chantier_gros_oeuvre/${encodeURIComponent(q)}${n > 1 ? `?page=${n}` : ""}`, 3),
+  },
+  {
+    // Outside the EU: customs and import VAT come on top of the price.
+    id: "autotrader",
+    name: "Autotrader Plant",
+    enabled: true,
+    languages: ["en"],
+    defaultCountry: "United Kingdom",
+    currency: "GBP",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/www\.autotrader\.co\.uk\/plant-machinery-details\/\d+/.test(url),
+    paged: () =>
+      ["DOOSAN", "DEVELON", "DAEWOO", "HYUNDAI", "YANMAR", "HITACHI", "VOLVO", "JCB", "SAMSUNG"].map((make) => ({
+        page: (n: number) => `https://www.autotrader.co.uk/plant/plant-machinery/excavators?make=${make}${n > 1 ? `&page=${n}` : ""}`,
+        maxPages: NATIONAL_MAX_PAGES,
+      })),
+  },
+  {
+    // Official Search-API, once mobile.de grants an API-Account (scraper/mobile-de-api.ts). Without credentials it does nothing.
+    id: "mobile-de",
+    name: "mobile.de",
+    enabled: !!(process.env.MOBILE_DE_API_USER && process.env.MOBILE_DE_API_PASSWORD),
+    api: true,
+    languages: ["de"],
+    defaultCountry: "Deutschland",
+    ai: false,
   },
 ];

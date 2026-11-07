@@ -9,6 +9,7 @@ import PhotoViewer from "@/components/PhotoViewer";
 import SignOut from "@/components/SignOut";
 import { DEFAULT_LIMITS, withinLimits } from "@/lib/config";
 import { costPanel, NEGOTIATION, negotiatedText, type PkrRate } from "@/lib/costs";
+import { originalPrice } from "@/lib/currency";
 import { isSaleAd } from "@/lib/market";
 import { INTERVAL_CHOICES, type Schedule } from "@/lib/schedule";
 import type { ScraperSettings } from "@/lib/settings";
@@ -302,6 +303,8 @@ export default function Home() {
   const photoListing = photoFor ? data?.listings.find((x) => x.id === photoFor) : undefined;
   const commentListing = commentFor ? (data?.listings.find((x) => x.id === commentFor) ?? null) : null;
   const failed = Object.entries(data?.status.sources ?? {}).filter(([, s]) => !s.ok);
+  const resting = Object.entries(data?.status.sources ?? {}).filter(([, s]) => s.restingUntil);
+  const until = (iso: string) => new Date(iso).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
   const pagesDone = data?.status.pagesDone ?? 0;
   const pagesTotal = data?.status.pagesTotal ?? 0;
   const lastActivity = data?.status.lastActivity;
@@ -400,6 +403,12 @@ export default function Home() {
       {data && !running && failed.length > 0 && (
         <div className="notice">
           {`${failed.length} source(s) failed: ${failed.map(([id, s]) => `${id} (${s.error ?? "error"})`).join("; ")}`}
+          {failed.some(([, s]) => s.blocked) && " · a site that refused is left alone for a day or more, then tried again"}
+        </div>
+      )}
+      {data && !running && resting.length > 0 && (
+        <div className="notice">
+          {`Resting after a block: ${resting.map(([id, s]) => `${id} (until ${until(s.restingUntil!)})`).join("; ")}`}
         </div>
       )}
       {error && <div className="notice err">{error}</div>}
@@ -525,8 +534,9 @@ export default function Home() {
                       <a href={l.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="title" title={l.title}>
                         {l.title}
                       </a>
-                      <strong className="price" title={l.priceEur != null && isSaleAd(l) ? negotiatedText(l.priceEur) : undefined}>
-                        {l.priceEur != null ? eur(l.priceEur) : "On request"}
+                      <strong className="price" title={l.priceEur != null && isSaleAd(l) ? negotiatedText(l.priceEur) : (l.priceNote ?? undefined)}>
+                        {l.priceEur != null ? eur(l.priceEur) : (originalPrice(l) ?? "On request")}
+                        {l.priceEur != null && originalPrice(l) && <small className="orig">{originalPrice(l)}</small>}
                       </strong>
                     </div>
                     <div className="facts">

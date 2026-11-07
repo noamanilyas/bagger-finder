@@ -10,6 +10,18 @@ const clean = (s: string) => s.replace(/\s+/g, " ").trim();
 /** The same ad can be linked with a different query or hash. */
 export const withoutQuery = (href: string) => href.split(/[?#]/)[0];
 
+/** For sites whose ad links carry tracking (Source.stripQuery): one card per ad, under its plain address. */
+export function withoutTracking(blocks: Block[], strip = false): Block[] {
+  if (!strip) return blocks;
+  const best = new Map<string, Block>();
+  for (const b of blocks) {
+    const href = withoutQuery(b.href);
+    const prev = best.get(href);
+    if (!prev || b.text.length > prev.text.length) best.set(href, { ...b, href, img: b.img ?? prev?.img ?? null });
+  }
+  return [...best.values()];
+}
+
 /** Text with a space between elements, so "<b>R140W</b><i>Mobilbagger</i>" does not become one word. */
 function spacedTextOf(n: CheerioNode): string {
   if (n.type === "text") return n.data ?? "";
@@ -26,7 +38,13 @@ function spacedTextOf(n: CheerioNode): string {
  * link through data-href instead of an <a>. The older sources run without it: their parsers expect the joined text,
  * and new text would send all their stored ads back to AI.
  */
-export function collectBlocksCheerio($: CheerioRoot, pageUrl: string, isListing?: (url: string) => boolean, spaced = false): Block[] {
+export function collectBlocksCheerio(
+  $: CheerioRoot,
+  pageUrl: string,
+  isListing?: (url: string) => boolean,
+  spaced = false,
+  maxChars = 600,
+): Block[] {
   const best = new Map<string, Block>();
   const photos = new Map<string, string | null>();
   const links = spaced ? "a[href], [data-href]" : "a[href]";
@@ -61,7 +79,7 @@ export function collectBlocksCheerio($: CheerioRoot, pageUrl: string, isListing?
     let text = textOf(a);
     for (const parent of $(a).parents().toArray().slice(0, 5) as CheerioNode[]) {
       const t = textOf(parent);
-      if (t.length > 800 || holdsOtherListing(parent, href)) break;
+      if (t.length > Math.max(800, maxChars) || holdsOtherListing(parent, href)) break;
       container = parent;
       text = t;
     }
@@ -75,7 +93,7 @@ export function collectBlocksCheerio($: CheerioRoot, pageUrl: string, isListing?
     }
     if (text.length < 25) return;
     const prev = best.get(href);
-    if (!prev || text.length > prev.text.length) best.set(href, { href, text: text.slice(0, 600), img: null });
+    if (!prev || text.length > prev.text.length) best.set(href, { href, text: text.slice(0, maxChars), img: null });
   });
   return [...best.values()].map((b) => ({ ...b, img: photos.get(b.href) ?? null }));
 }

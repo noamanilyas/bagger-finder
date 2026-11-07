@@ -115,3 +115,24 @@ alter table public.machine_knowledge enable row level security;
 alter table public.machine_knowledge
   add column if not exists interesting boolean not null default false,  -- shows as a deal and gets an AI review
   add column if not exists listing_id  text;                            -- set: only this ad. Not linked to listings, so a comment outlives an expired ad
+
+-- Prices in other currencies (safe to run again). price_eur stays the euro value the app compares; these keep what the
+-- site showed, so a moving exchange rate is not taken for a new price in the history.
+alter table public.listings
+  add column if not exists price_amount   numeric,
+  add column if not exists price_currency text;
+
+alter table public.listing_history
+  add column if not exists price_amount   numeric,
+  add column if not exists price_currency text;
+
+-- Sites that refused the scraper, and until when they rest before they are asked again (lib/source-health.ts).
+create table if not exists public.source_health (
+  source        text primary key,
+  blocked_until timestamptz,
+  strikes       integer not null default 0,
+  last_error    text,
+  updated_at    timestamptz not null default now()
+);
+
+alter table public.source_health enable row level security;

@@ -1,4 +1,5 @@
 import type { Source } from "../lib/config";
+import { findPrice, toEur, type Currency } from "../lib/currency";
 import { fieldsFor } from "../lib/languages";
 import type { AdType } from "../lib/types";
 import { CARD_PARSERS, toNumber } from "./parsers";
@@ -13,6 +14,9 @@ export type Extracted = {
   make: string | null;
   model: string | null;
   priceEur: number | null;
+  /** the price as the site shows it, when that is not euros; priceEur is then worked out from the rate of the day */
+  priceAmount?: number | null;
+  priceCurrency?: Currency | null;
   year: number | null;
   hours: number | null;
   location: string | null;
@@ -22,6 +26,34 @@ export type Extracted = {
   issues: string | null;
   priceNote: string | null;
 };
+
+/**
+ * Puts a price found in another currency into euros. A euro price found on such a site stays as it is. Cards without a
+ * price the site parser saw get a second look in the site's own currency.
+ */
+/**
+ * No machine on the list sells for this little. A regex-read price below it is a placeholder ("1 000 PLN" on a Cat 972G),
+ * a monthly rate or a part: it becomes "no price", and the listed amount is kept in the note.
+ */
+export const MIN_MACHINE_EUR = 2500;
+
+function plausible(item: Extracted): Extracted {
+  if (item.priceEur == null || item.priceEur >= MIN_MACHINE_EUR) return item;
+  const listed = item.priceCurrency && item.priceAmount != null ? `${item.priceAmount.toLocaleString("de-DE")} ${item.priceCurrency}` : `€${item.priceEur.toLocaleString("de-DE")}`;
+  const note = `listed at ${listed}: a placeholder, a rate or a part`;
+  return { ...item, priceEur: null, priceAmount: null, priceCurrency: null, priceNote: item.priceNote ? `${item.priceNote}; ${note}` : note };
+}
+
+export function settlePrice(item: Extracted, text: string, siteCurrency: Currency = "EUR"): Extracted {
+  let { priceEur, priceAmount = null, priceCurrency = null } = item;
+  if (priceEur == null && priceAmount == null && siteCurrency !== "EUR") {
+    const found = findPrice(text, siteCurrency);
+    if (found) [priceAmount, priceCurrency] = [found.amount, found.currency];
+  }
+  if (priceCurrency === "EUR") [priceEur, priceAmount, priceCurrency] = [priceAmount, null, null];
+  if (priceCurrency && priceAmount != null) priceEur = toEur(priceAmount, priceCurrency);
+  return plausible({ ...item, priceEur, priceAmount: priceCurrency ? priceAmount : null, priceCurrency });
+}
 
 /**
  * Models you want tried first (comma separated OpenRouter ids, e.g. "google/gemma-4-31b-it:free").
@@ -353,7 +385,7 @@ function parseCard(raw: string): { title: string; location: string | null; text:
   return { title: text.slice(0, 140), location: null, text };
 }
 
-export type ParsingSource = Pick<Source, "id" | "languages">;
+export type ParsingSource = Pick<Source, "id" | "languages" | "currency">;
 
 export function heuristicItem(b: Block, source: ParsingSource): Extracted {
   return viaHeuristic([b], source)[0];
@@ -365,7 +397,7 @@ function viaHeuristic(blocks: Block[], source: ParsingSource): Extracted[] {
   return blocks.map((b) => {
     const empty = { url: b.href, description: b.text.slice(0, 280), make: null, model: null, imageUrl: b.img, adType: null, issues: null };
     const site = siteParser?.(b.text);
-    if (site) return { ...empty, ...site };
+    if (site) return settlePrice({ ...empty, ...site }, b.text, source.currency);
 
     const { title, location, text } = parseCard(b.text);
     // Some cards glue the model to the price ("LCR-799.000 €" is LCR-7 at 99.000 €). "EUR\b" so "2023 Euro 3" is no price.
@@ -384,7 +416,7 @@ function viaHeuristic(blocks: Block[], source: ParsingSource): Extracted[] {
       hoursText.match(/(?<![\d.,])(\d{1,3}(?:[.,\s]\d{3})+)\s*(?:m\/)?(?:h|std)(?![a-zäöüß])/i) ??
       hoursText.match(/(?<![\d.,])(\d{2,6})\s*(?:m\/)?(?:h|std)(?![a-zäöüß])/i) ??
       hoursText.match(labelled.hours);
-    return {
+    const item: Extracted = {
       ...empty,
       title,
       description: text.slice(0, 280),
@@ -394,6 +426,7 @@ function viaHeuristic(blocks: Block[], source: ParsingSource): Extracted[] {
       location,
       priceNote: null,
     };
+    return source.currency && source.currency !== "EUR" ? settlePrice(item, text, source.currency) : item;
   });
 }
 

@@ -13,7 +13,7 @@ export async function skipHeavyContent({ page }: { page: Page }) {
 }
 
 /** Reads the cards of a page opened in the browser. Same rules as collectBlocksCheerio. */
-export async function readCards(page: Page, cookieButtons: string[], isListing?: (url: string) => boolean): Promise<Block[]> {
+export async function readCards(page: Page, cookieButtons: string[], isListing?: (url: string) => boolean, maxChars = 600): Promise<Block[]> {
   await page.waitForLoadState("domcontentloaded");
   // Dismiss cookie banners if there is one.
   for (const label of cookieButtons) {
@@ -27,7 +27,7 @@ export async function readCards(page: Page, cookieButtons: string[], isListing?:
   const allLinks = await page.$$eval("a[href]", (as) => as.map((a) => (a as HTMLAnchorElement).href));
   const listingLinks = isListing ? allLinks.filter(isListing).map(withoutQuery) : [];
 
-  const cards = await page.evaluate(({ listings, imgAttributes }) => {
+  const cards = await page.evaluate(({ listings, imgAttributes, cut }) => {
     const listingSet = new Set(listings);
     const best = new Map<string, string>();
     const images = new Map<string, string[]>();
@@ -41,7 +41,7 @@ export async function readCards(page: Page, cookieButtons: string[], isListing?:
       for (let i = 0; i < 5 && el.parentElement; i++) {
         el = el.parentElement;
         const t = el.innerText || "";
-        if (t.length > 800) break;
+        if (t.length > Math.max(800, cut)) break;
         const holdsOther = Array.from(el.querySelectorAll("a[href]")).some((x) => {
           const other = (x as HTMLAnchorElement).href.split(/[?#]/)[0];
           return other !== own && listingSet.has(other);
@@ -60,10 +60,10 @@ export async function readCards(page: Page, cookieButtons: string[], isListing?:
       ]);
       if (text.length < 25) return;
       const prev = best.get(href);
-      if (!prev || text.length > prev.length) best.set(href, text.slice(0, 600));
+      if (!prev || text.length > prev.length) best.set(href, text.slice(0, cut));
     });
     return [...best].map(([href, text]) => ({ href, text, imageValues: images.get(href) ?? [] }));
-  }, { listings: listingLinks, imgAttributes: IMG_ATTRIBUTES });
+  }, { listings: listingLinks, imgAttributes: IMG_ATTRIBUTES, cut: maxChars });
 
   return cards.map(({ href, text, imageValues }) => ({ href, text, img: pickPhoto(imageValues, page.url()) }));
 }

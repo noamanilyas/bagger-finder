@@ -1,7 +1,39 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { planHistory, type HistoryHead } from "./history";
 import type { KnowledgeNote } from "./knowledge";
+import { isCurrency } from "./currency";
 import type { Listing } from "./types";
+
+/** Columns added for prices in other currencies (supabase/schema.sql). Until they exist, rows are written without them. */
+const PRICE_COLUMNS = ["price_amount", "price_currency"] as const;
+let priceColumnsMissing = false;
+
+const isMissingColumn = (message: string) => /price_amount|price_currency/.test(message) && /column|schema cache/i.test(message);
+
+function withoutPriceColumns<T extends Record<string, unknown>>(rows: T[]): T[] {
+  return rows.map((r) => {
+    const copy = { ...r };
+    for (const c of PRICE_COLUMNS) delete copy[c];
+    return copy;
+  });
+}
+
+function notePriceColumnsMissing(message: string) {
+  if (!priceColumnsMissing) {
+    console.warn(`[supabase] ${message}. Prices in other currencies are kept in euros only; run supabase/schema.sql to keep the original amounts.`);
+  }
+  priceColumnsMissing = true;
+}
+
+/** Writes rows, and once more without the new price columns when the database does not have them yet. */
+async function writeRows<T extends Record<string, unknown>>(write: (rows: T[]) => PromiseLike<{ error: { message: string } | null }>, rows: T[]) {
+  let { error } = await write(priceColumnsMissing ? withoutPriceColumns(rows) : rows);
+  if (error && !priceColumnsMissing && isMissingColumn(error.message)) {
+    notePriceColumnsMissing(error.message);
+    ({ error } = await write(withoutPriceColumns(rows)));
+  }
+  return error;
+}
 
 let client: SupabaseClient | null | undefined;
 
@@ -29,6 +61,8 @@ const toRow = (l: Listing) => ({
   model_label: l.modelLabel,
   wheeled: l.wheeled,
   price_eur: l.priceEur,
+  price_amount: l.priceAmount ?? null,
+  price_currency: l.priceCurrency ?? null,
   year: l.year,
   hours: l.hours,
   location: l.location,
@@ -64,6 +98,8 @@ const fromRow = (r: any): Listing => ({
   modelLabel: r.model_label,
   wheeled: r.wheeled,
   priceEur: r.price_eur == null ? null : Number(r.price_eur),
+  priceAmount: r.price_amount == null ? null : Number(r.price_amount),
+  priceCurrency: isCurrency(r.price_currency) ? r.price_currency : null,
   year: r.year,
   hours: r.hours,
   location: r.location,
@@ -105,7 +141,7 @@ export async function saveListings(listings: Listing[]): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
   for (let i = 0; i < listings.length; i += 200) {
-    const { error } = await sb.from("listings").upsert(listings.slice(i, i + 200).map(toRow), { onConflict: "id" });
+    const error = await writeRows((rows) => sb.from("listings").upsert(rows, { onConflict: "id" }), listings.slice(i, i + 200).map(toRow));
     if (error) throw new Error(`Supabase write failed: ${error.message}`);
   }
 }
@@ -127,16 +163,25 @@ export async function deleteOlderThan(cutoffIso: string): Promise<void> {
 /** Newest history row per listing. */
 async function loadHistoryHeads(sb: SupabaseClient): Promise<HistoryHead[]> {
   const heads = new Map<string, HistoryHead>();
+  let columns = priceColumnsMissing ? "id,listing_id,price_eur,hours" : "id,listing_id,price_eur,hours,price_amount";
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb
-      .from("listing_history")
-      .select("id,listing_id,price_eur,hours")
-      .order("id", { ascending: true })
-      .range(from, from + 999);
-    if (error) throw new Error(`Supabase history read failed: ${error.message}`);
+    let { data, error } = await sb.from("listing_history").select(columns).order("id", { ascending: true }).range(from, from + 999);
+    if (error && columns.includes("price_amount") && isMissingColumn(error.message)) {
+      notePriceColumnsMissing(error.message);
+      columns = "id,listing_id,price_eur,hours";
+      ({ data, error } = await sb.from("listing_history").select(columns).order("id", { ascending: true }).range(from, from + 999));
+    }
+    if (error || !data) throw new Error(`Supabase history read failed: ${error?.message ?? "no data"}`);
     // ascending ids: a later row replaces the earlier one
     for (const r of data as any[]) {
-      heads.set(r.listing_id, { id: r.id, listingId: r.listing_id, priceEur: r.price_eur == null ? null : Number(r.price_eur), hours: r.hours });
+      heads.set(r.listing_id, {
+        id: r.id,
+        listingId: r.listing_id,
+        priceEur: r.price_eur == null ? null : Number(r.price_eur),
+        hours: r.hours,
+        // undefined, not null, when the column is missing: lib/history.ts then compares in euros
+        priceAmount: "price_amount" in r ? (r.price_amount == null ? null : Number(r.price_amount)) : undefined,
+      });
     }
     if (data.length < 1000) break;
   }
@@ -160,6 +205,8 @@ export async function recordHistory(listings: Listing[], now: string): Promise<{
     wheeled: l.wheeled,
     year: l.year,
     price_eur: l.priceEur,
+    price_amount: l.priceAmount ?? null,
+    price_currency: l.priceCurrency ?? null,
     hours: l.hours,
     location: l.location,
     ad_type: l.adType,
@@ -170,7 +217,7 @@ export async function recordHistory(listings: Listing[], now: string): Promise<{
     last_seen: lastSeen,
   }));
   for (let i = 0; i < rows.length; i += 200) {
-    const { error } = await sb.from("listing_history").insert(rows.slice(i, i + 200));
+    const error = await writeRows((part) => sb.from("listing_history").insert(part), rows.slice(i, i + 200));
     if (error) throw new Error(`Supabase history write failed: ${error.message}`);
   }
   for (let i = 0; i < plan.touch.length; i += 200) {

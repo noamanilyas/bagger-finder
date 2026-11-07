@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { costPanel, negotiatedText, type PkrRate } from "@/lib/costs";
+import { originalPrice } from "@/lib/currency";
 import { isSaleAd } from "@/lib/market";
 import { shortId, type Listing } from "@/lib/types";
 
@@ -83,8 +84,10 @@ function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => voi
   );
 
   const here = element("div", "popup-box");
-  here.append(element("span", "popup-kv", "Price here"), element("strong", "", l.priceEur != null ? euro(l.priceEur) : "On request"));
+  here.append(element("span", "popup-kv", "Price here"), element("strong", "", l.priceEur != null ? euro(l.priceEur) : (originalPrice(l) ?? "On request")));
+  if (l.priceEur != null && originalPrice(l)) here.append(element("span", "cost-note", `listed as ${originalPrice(l)}`));
   if (l.priceEur != null && isSaleAd(l)) here.append(element("span", "cost-note", negotiatedText(l.priceEur)));
+  if (l.priceNote) here.append(element("span", "cost-note", l.priceNote));
   const pk = element("div", "popup-box pk");
   pk.append(element("span", "popup-kv", "Landed in Pakistan"), element("strong", "", p.pkr ?? p.eur));
   if (p.pkr) pk.append(element("span", "cost-note", p.eur));

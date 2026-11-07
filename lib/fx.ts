@@ -1,4 +1,6 @@
 import type { PkrRate } from "./costs";
+import { CURRENCIES, type EurRates } from "./currency";
+import { readFxCache, writeFxCache } from "./store";
 
 const REFRESH_MS = 60 * 60_000;
 const TIMEOUT_MS = 5_000;
@@ -47,6 +49,35 @@ async function tapTapRate(): Promise<number | null> {
 
 async function marketRate(): Promise<number | null> {
   return parseMarketRate(await getJson<{ rates?: { PKR?: unknown } }>("https://open.er-api.com/v6/latest/EUR"));
+}
+
+/** The rates for the currencies the sites show, from the same feed. Only usable numbers are kept. */
+export function parseEurRates(json: { rates?: Record<string, unknown> }): EurRates {
+  const out: EurRates = {};
+  for (const c of CURRENCIES) {
+    const rate = usable(json.rates?.[c]);
+    if (rate != null) out[c] = rate;
+  }
+  return out;
+}
+
+/**
+ * Today's rates for a scrape. A failed request falls back to the last rates that worked (kept in the data folder), and
+ * without those, prices in other currencies stay without a euro value for this run.
+ */
+export async function loadEurRates(): Promise<EurRates> {
+  try {
+    const fetched = parseEurRates(await getJson<{ rates?: Record<string, unknown> }>("https://open.er-api.com/v6/latest/EUR"));
+    if (Object.keys(fetched).length > 1) {
+      writeFxCache({ rates: fetched, fetchedAt: new Date().toISOString() });
+      return fetched;
+    }
+    throw new Error("no rates in the response");
+  } catch (e) {
+    const cached = readFxCache();
+    console.warn(`[fx] currency rates: ${(e as Error).message}${cached ? `; using those of ${cached.fetchedAt}` : "; prices in other currencies get no euro value"}`);
+    return cached?.rates ?? { EUR: 1 };
+  }
 }
 
 const SOURCES: { name: string; get: () => Promise<number | null> }[] = [

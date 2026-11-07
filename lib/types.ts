@@ -1,3 +1,5 @@
+import type { Currency } from "./currency";
+
 export type AdType = "sale" | "rental" | "parts" | "other";
 export type AiVerdict = "interesting" | "suspicious" | "not_comparable";
 
@@ -15,6 +17,9 @@ export type Listing = {
   /** wheeled excavator (Mobilbagger / Radbagger) */
   wheeled: boolean;
   priceEur: number | null;
+  /** the price as the site shows it when that is not euros (see lib/currency.ts); priceEur is worked out from it */
+  priceAmount?: number | null;
+  priceCurrency?: Currency | null;
   year: number | null;
   hours: number | null;
   location: string | null;
@@ -56,6 +61,10 @@ export type SourceResult = {
   pages: number;
   found: number;
   error?: string;
+  /** the site refused the scraper this run (status code or bot check): it rests before it is asked again */
+  blocked?: string;
+  /** skipped this run because it is still resting after a block, until this time */
+  restingUntil?: string;
 };
 
 export type Status = {
