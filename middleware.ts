@@ -38,5 +38,5 @@ export default async function middleware(request: NextRequest) {
   return handleAuthkitHeaders(request, headers);
 }
 
-// Render's health check (render.yaml) has no session.
-export const config = { matcher: "/((?!_next/static|_next/image|favicon.ico|api/health).*)" };
+// Render's health check (render.yaml) has no session, and the ingest API checks its own key (app/api/ingest/route.ts).
+export const config = { matcher: "/((?!_next/static|_next/image|favicon.ico|api/health|api/ingest).*)" };

@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Open mobile.de Search",
+  "version": "2.0.0",
+  "description": "Opens the mobile.de construction machine search in a new tab.",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open mobile.de search"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://suchen.mobile.de/fahrzeuge/search.html*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

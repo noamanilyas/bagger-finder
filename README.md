@@ -131,6 +131,39 @@ Notes:
 - Run `supabase/schema.sql` again after updating: it adds the original-price columns and `source_health`. Until then the
   scraper still works, keeping euro values only.
 
+### Ingest API (machines from another system)
+
+`POST /api/ingest` stores machines sent by an external system as if the scraper had found them. Set `INGEST_API_KEY`
+(at least 16 characters, e.g. `openssl rand -hex 32`) and send it as `Authorization: Bearer <key>` or `X-API-Key: <key>`.
+The path skips the WorkOS sign-in; without the variable it answers 503.
+
+```sh
+curl -X POST https://<your address>/api/ingest \
+  -H "Authorization: Bearer $INGEST_API_KEY" -H "Content-Type: application/json" \
+  -d '{"machines": [{
+        "url": "https://dealer.example/ads/123",
+        "title": "Doosan DX140W Mobilbagger",
+        "make": "Doosan", "model": "DX140W",
+        "price": 39500, "currency": "EUR",
+        "year": 2012, "hours": 8400,
+        "location": "Linz, Österreich",
+        "imageUrl": "https://dealer.example/img/123.jpg",
+        "source": "Dealer feed"
+      }]}'
+```
+
+Only `url` and `title` are required. Optional: `description`, `make`, `model`, `modelKey` (a key from `WANTED` in
+`lib/config.ts`, when the text does not name the model), `price` with `currency` (EUR by default; PLN, CZK, HUF, RON,
+NOK, DKK, SEK, GBP, CHF), `year`, `hours`, `location`, `lat` + `lng` (skips the map lookup), `imageUrl`, `source` (shown
+as the site name, "External" by default) and `adType` (`sale` by default). The body can also be a bare array or one
+machine; at most 500 per request.
+
+Each machine goes through the scraper's rules: a wanted model, the price and year limits, the Mobilbagger setting and
+the European area. The answer lists what was stored (with the listing `id`, and `created` false for an update) and what
+was rejected, with the reason. The id comes from the URL, as for scraped ads, so sending a machine again updates it,
+and an ad that is both sent and scraped is stored once. Like scraped ads, a machine leaves the list 3 days after it was
+last sent or seen, so send machines that are still for sale again at least once a day.
+
 ### mobile.de
 
 Its website refuses the crawler and its robots.txt closes the search pages, so it is read only through the official

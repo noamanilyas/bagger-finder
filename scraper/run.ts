@@ -20,6 +20,7 @@ import { expandCountryCode, inEurope, isExcludedPlace } from "../lib/countries";
 import { cookieLabels } from "../lib/languages";
 import { hasSupabase, deleteListings, deleteOlderThan, finishRun, loadListings, recordHistory, saveListings } from "../lib/supabase";
 import { DEFAULT_SETTINGS, loadSettings } from "../lib/settings";
+import { listingId, normalizeUrl } from "../lib/listing-id";
 import { readDb, readGeoCache, readStatus, writeDb, writeStatus } from "../lib/store";
 import type { Listing, SourceResult, Status } from "../lib/types";
 import { blockReason } from "./blocks";
@@ -106,19 +107,6 @@ function finishedPage() {
   status.pagesDone = (status.pagesDone ?? 0) + 1;
   save();
 }
-
-function normalizeUrl(u: string): string {
-  try {
-    const url = new URL(u);
-    url.hash = "";
-    for (const k of [...url.searchParams.keys()]) if (/^(utm_|fbclid|gclid)/.test(k)) url.searchParams.delete(k);
-    return url.toString();
-  } catch {
-    return u;
-  }
-}
-
-const listingId = (url: string) => crypto.createHash("sha1").update(normalizeUrl(url)).digest("hex").slice(0, 16);
 
 /** Fingerprint of a card. Ignores "Heute, 12:30" style dates, which change without the ad changing. */
 const cardHash = (text: string) =>

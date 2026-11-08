@@ -24,6 +24,9 @@ services:
         sync: false # https://<your Render address>/callback
       - key: ALLOWED_EMAILS
         sync: false
+      # Key for POST /api/ingest (machines from an external system). Without it the API is off.
+      - key: INGEST_API_KEY
+        sync: false
       # mobile.de's Search-API, once it grants an API-Account. Without these mobile.de is skipped.
       - key: MOBILE_DE_API_USER
         sync: false
