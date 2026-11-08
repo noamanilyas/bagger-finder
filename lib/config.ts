@@ -358,6 +358,9 @@ export const NATIONAL_QUERIES = [
   "cat 140",
 ];
 
+/** Leboncoin refuses after a few pages: the makes that build the wanted wheeled excavators, five pages a run in all. */
+export const LEBONCOIN_QUERIES = ["doosan", "develon", "daewoo", "hyundai", "yanmar"];
+
 /** Most of these sites read 20 to 50 ads per page, so 6 pages are plenty for one make inside the machinery section. */
 const NATIONAL_MAX_PAGES = 6;
 
@@ -933,7 +936,14 @@ export const SOURCES: Source[] = [
     defaultCountry: "France",
     ...NATIONAL,
     isListing: (url) => /^https:\/\/www\.leboncoin\.fr\/ad\/[a-z_]+\/\d+(?:[?#]|$)/.test(url),
-    paged: () => searchesFor((q, n) => `https://www.leboncoin.fr/ck/btp_chantier_gros_oeuvre/${encodeURIComponent(q)}${n > 1 ? `?page=${n}` : ""}`, 3),
+    // It refused (HTTP 403) after 6 pages on 2026-11-08, so it gets the main excavator makes only, one page each, slowly.
+    delaySecs: 10,
+    paged: () =>
+      searchesFor(
+        (q, n) => `https://www.leboncoin.fr/ck/btp_chantier_gros_oeuvre/${encodeURIComponent(q)}${n > 1 ? `?page=${n}` : ""}`,
+        1,
+        LEBONCOIN_QUERIES,
+      ),
   },
   {
     // Outside the EU: customs and import VAT come on top of the price.

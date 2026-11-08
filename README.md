@@ -122,6 +122,11 @@ Notes:
   3 seconds apart or the site's Crawl-delay, six sites side by side.
 - A site that refuses (HTTP 401, 403, 429 or a bot check page) gets no more pages that run and is never retried in the
   browser. It rests a day, then twice as long each time it refuses again, up to a week (table `source_health`).
+- Scheduling is set under Scraper settings: how often (default every 6 hours), quiet hours without automatic scrapes
+  (default 22:00 to 06:00 German time; a scrape due then runs when they end), and how often each site is read
+  (default: Machineryline, Mascus, TruckScout24 and Leboncoin once a day, the others every run). "Refresh now" ignores all three
+  and reads every site. The logic is in `lib/schedule.ts` and `lib/site-schedule.ts`; when each site was last read is
+  kept in `source_health`.
 - New places are looked up on the map at most 300 per run (Nominatim allows one a second); the rest follow next run.
 - Run `supabase/schema.sql` again after updating: it adds the original-price columns and `source_health`. Until then the
   scraper still works, keeping euro values only.

@@ -31,7 +31,7 @@ export const readFxCache = () => readJson<FxCache | null>("fx.json", null);
 export const writeFxCache = (c: FxCache) => writeJson("fx.json", c);
 
 /** Sites that blocked the scraper, and until when they rest (see lib/source-health.ts). Used when there is no Supabase. */
-export type HealthFile = Record<string, { blockedUntil: string | null; strikes: number; lastError: string | null }>;
+export type HealthFile = Record<string, { blockedUntil: string | null; strikes: number; lastError: string | null; lastReadAt?: string | null }>;
 export const readHealthFile = () => readJson<HealthFile>("source-health.json", {});
 export const writeHealthFile = (h: HealthFile) => writeJson("source-health.json", h);
 

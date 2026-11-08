@@ -6,7 +6,8 @@
 import { readHealthFile, writeHealthFile, type HealthFile } from "./store";
 import { getSupabase } from "./supabase";
 
-export type Health = { blockedUntil: string | null; strikes: number; lastError: string | null };
+/** lastReadAt: when an automatic or manual scrape last read the site, for sites not read every run (lib/site-schedule.ts) */
+export type Health = { blockedUntil: string | null; strikes: number; lastError: string | null; lastReadAt?: string | null };
 export type HealthMap = Record<string, Health>;
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -21,7 +22,7 @@ export function restMs(strikes: number, retryAfterMs: number | null = null): num
 /** The record after a block. */
 export function afterBlock(prev: Health | undefined, reason: string, now: number, retryAfterMs: number | null = null): Health {
   const strikes = (prev?.strikes ?? 0) + 1;
-  return { blockedUntil: new Date(now + restMs(strikes, retryAfterMs)).toISOString(), strikes, lastError: reason };
+  return { ...prev, blockedUntil: new Date(now + restMs(strikes, retryAfterMs)).toISOString(), strikes, lastError: reason };
 }
 
 export const isResting = (h: Health | undefined, now: number) => !!h?.blockedUntil && Date.parse(h.blockedUntil) > now;
@@ -44,11 +45,11 @@ const fallback = (what: string, err: string) => {
 export async function loadHealth(): Promise<HealthMap> {
   const sb = getSupabase();
   if (sb) {
-    const { data, error } = await sb.from("source_health").select("source,blocked_until,strikes,last_error");
+    const { data, error } = await sb.from("source_health").select("source,blocked_until,strikes,last_error,last_read_at");
     if (!error) {
       const out: HealthMap = {};
-      for (const r of data as { source: string; blocked_until: string | null; strikes: number; last_error: string | null }[]) {
-        out[r.source] = { blockedUntil: r.blocked_until, strikes: r.strikes ?? 0, lastError: r.last_error };
+      for (const r of data as { source: string; blocked_until: string | null; strikes: number; last_error: string | null; last_read_at: string | null }[]) {
+        out[r.source] = { blockedUntil: r.blocked_until, strikes: r.strikes ?? 0, lastError: r.last_error, lastReadAt: r.last_read_at };
       }
       return out;
     }
@@ -65,6 +66,7 @@ export async function saveHealth(source: string, health: Health): Promise<void> 
       blocked_until: health.blockedUntil,
       strikes: health.strikes,
       last_error: health.lastError,
+      last_read_at: health.lastReadAt ?? null,
       updated_at: new Date().toISOString(),
     });
     if (!error) return;

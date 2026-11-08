@@ -14,6 +14,7 @@ import { applyMarket, crossSiteDuplicates } from "../lib/market";
 import { SOURCES, WANTED, fitsMobileOnly, isWheeled, looksRelevant, matchModel, scrapeLimits, withinLimits, type PagedSearch, type Source } from "../lib/config";
 import { setEurRates, toEur } from "../lib/currency";
 import { loadEurRates } from "../lib/fx";
+import { hoursFor, isSiteDue, nextSiteRead } from "../lib/site-schedule";
 import { afterBlock, isResting, loadHealth, parseRetryAfter, saveHealth, type HealthMap } from "../lib/source-health";
 import { expandCountryCode, inEurope, isExcludedPlace } from "../lib/countries";
 import { cookieLabels } from "../lib/languages";
@@ -41,6 +42,25 @@ const KEEP_DAYS = 3;
 const FORCE_BROWSER = process.env.USE_BROWSER === "true";
 /** For trying sites out: SCRAPE_SOURCES=otomoto,finn reads only those. Unset in normal runs. */
 const ONLY = process.env.SCRAPE_SOURCES?.split(",").map((s) => s.trim()).filter(Boolean) ?? null;
+/** Automatic runs read only the sites that are due; "Refresh now" and runs from the command line read every site. */
+const AUTOMATIC = process.env.SCRAPE_TRIGGER === "auto";
+
+/** Skipped by this automatic run because the site is read less often: says until when. */
+function notDue(source: Source, now: number): string | null {
+  if (!AUTOMATIC) return null;
+  const hours = hoursFor(settings.siteHours, source.id);
+  const lastReadAt = health[source.id]?.lastReadAt;
+  return isSiteDue(lastReadAt, hours, now) ? null : nextSiteRead(lastReadAt, hours);
+}
+
+/** Notes that a site was read, so its next automatic read can be timed. */
+async function markRead(source: Source, startedAt: string) {
+  const next = { ...(health[source.id] ?? { blockedUntil: null, strikes: 0, lastError: null }), lastReadAt: startedAt };
+  // A site read without a block starts with a clean record again.
+  if (!blockedThisRun.has(source.id)) Object.assign(next, { blockedUntil: null, strikes: 0, lastError: null });
+  health[source.id] = next;
+  await saveHealth(source.id, next).catch((e) => console.warn(`[health] ${source.name}: ${(e as Error).message}`));
+}
 /** Free models are limited: ads over this budget use the regex parser and get AI on a later scrape. */
 const MAX_AI_CARDS_PER_RUN = 100;
 
@@ -287,6 +307,12 @@ async function crawl() {
       console.log(`[crawl] ${s.name} is resting after a block until ${h!.blockedUntil} (${h!.lastError}): skipped`);
       continue;
     }
+    const until = notDue(s, now);
+    if (until) {
+      sourceStat(s.id).notDueUntil = until;
+      console.log(`[crawl] ${s.name} is read every ${hoursFor(settings.siteHours, s.id)} h (scraper settings): next due ${until}, skipped`);
+      continue;
+    }
     plans.push({ source: s, ...(await plan(s, seen)) });
   }
 
@@ -408,18 +434,18 @@ async function crawl() {
     stat.error ??= error;
   }
 
-  // A site read without a block starts with a clean record again.
-  for (const { source } of plans) {
-    if (!blockedThisRun.has(source.id) && (health[source.id]?.strikes ?? 0) > 0) {
-      await saveHealth(source.id, { blockedUntil: null, strikes: 0, lastError: null }).catch(() => undefined);
-    }
-  }
+  for (const { source, jobs } of plans) if (jobs.length > 0) await markRead(source, status.startedAt ?? new Date().toISOString());
 }
 
 /** Ads from official APIs (mobile.de), when credentials are set: they join the crawled ads before merging. */
 async function readApis() {
   const source = SOURCES.find((s) => s.id === "mobile-de");
   if (!source?.enabled || !hasMobileDeAccess() || (ONLY && !ONLY.includes(source.id))) return;
+  const until = notDue(source, Date.now());
+  if (until) {
+    sourceStat(source.id).notDueUntil = until;
+    return;
+  }
   save("Reading mobile.de through its API…");
   const stat = sourceStat(source.id);
   try {
@@ -437,6 +463,7 @@ async function readApis() {
       collected.push({ source: source.id, sourceName: source.name, item, cardHash: cardHash(cardText), cardText, coords });
     }
     console.log(`[mobile.de] ${ads.length} ads read in ${requests} requests, ${stat.found} kept`);
+    await markRead(source, status.startedAt ?? new Date().toISOString());
   } catch (e) {
     stat.ok = false;
     stat.error = shortError(e);

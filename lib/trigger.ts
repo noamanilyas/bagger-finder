@@ -49,6 +49,8 @@ export async function triggerScrape(
       ...process.env,
       ...(limits ? { SCRAPE_MAX_PRICE: String(limits.maxPrice ?? ""), SCRAPE_MAX_YEAR: String(limits.maxYear ?? "") } : {}),
       ...(runId ? { SCRAPE_RUN_ID: String(runId) } : {}),
+      // Automatic runs read only the sites that are due (lib/site-schedule.ts); "Refresh now" reads them all.
+      SCRAPE_TRIGGER: trigger,
       CRAWLEE_STORAGE_DIR: path.join(os.tmpdir(), "crawlee"),
       // Crawlee misdetects the container's memory limit as 128 MB and logs false "overloaded" warnings
       CRAWLEE_MEMORY_MBYTES: process.env.CRAWLEE_MEMORY_MBYTES || "1024",

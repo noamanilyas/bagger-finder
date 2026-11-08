@@ -136,3 +136,7 @@ create table if not exists public.source_health (
 );
 
 alter table public.source_health enable row level security;
+
+-- When each site was last read: sites set to "once a day" in the scraper settings are skipped until due (safe to run again).
+alter table public.source_health
+  add column if not exists last_read_at timestamptz;

@@ -65,6 +65,8 @@ export type SourceResult = {
   blocked?: string;
   /** skipped this run because it is still resting after a block, until this time */
   restingUntil?: string;
+  /** skipped this automatic run: it is read less often (scraper settings) and is next due at this time */
+  notDueUntil?: string;
 };
 
 export type Status = {

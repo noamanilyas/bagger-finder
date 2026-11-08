@@ -7,11 +7,12 @@ import ConfirmScrape from "@/components/ConfirmScrape";
 import NextScrape from "@/components/NextScrape";
 import PhotoViewer from "@/components/PhotoViewer";
 import SignOut from "@/components/SignOut";
-import { DEFAULT_LIMITS, withinLimits } from "@/lib/config";
+import { DEFAULT_LIMITS, SOURCES, withinLimits } from "@/lib/config";
 import { costPanel, NEGOTIATION, negotiatedText, type PkrRate } from "@/lib/costs";
 import { originalPrice } from "@/lib/currency";
 import { isSaleAd } from "@/lib/market";
-import { INTERVAL_CHOICES, type Schedule } from "@/lib/schedule";
+import { DEFAULT_QUIET, INTERVAL_CHOICES, type Schedule } from "@/lib/schedule";
+import { hoursFor, SITE_FREQUENCIES } from "@/lib/site-schedule";
 import type { ScraperSettings } from "@/lib/settings";
 import { shortId, type Listing, type Status } from "@/lib/types";
 
@@ -304,6 +305,7 @@ export default function Home() {
   const commentListing = commentFor ? (data?.listings.find((x) => x.id === commentFor) ?? null) : null;
   const failed = Object.entries(data?.status.sources ?? {}).filter(([, s]) => !s.ok);
   const resting = Object.entries(data?.status.sources ?? {}).filter(([, s]) => s.restingUntil);
+  const notDue = Object.entries(data?.status.sources ?? {}).filter(([, s]) => s.notDueUntil);
   const until = (iso: string) => new Date(iso).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
   const pagesDone = data?.status.pagesDone ?? 0;
   const pagesTotal = data?.status.pagesTotal ?? 0;
@@ -382,6 +384,56 @@ export default function Home() {
                   ? "Automatic scraping is switched off on this server (AUTO_SCRAPE=false)."
                   : "The next scrape is due this long after the last one started, whether it was automatic or “Refresh now”. A restart does not reset it; a missed one runs at startup."}
               </div>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!!settings?.quiet}
+                  disabled={!settings}
+                  onChange={(e) => void saveSetting({ quiet: e.target.checked ? (settings?.quiet ?? DEFAULT_QUIET) : null })}
+                />
+                <span>
+                  <span className="check-title">No automatic scrapes at night</span>
+                  <span className="sub">German time. A scrape due in these hours runs when they end. “Refresh now” always works.</span>
+                </span>
+              </label>
+              {settings?.quiet && (
+                <div className="quiet-times">
+                  <label>
+                    From
+                    <input
+                      type="time"
+                      value={settings.quiet.from}
+                      onChange={(e) => e.target.value && void saveSetting({ quiet: { ...settings.quiet!, from: e.target.value } })}
+                    />
+                  </label>
+                  <label>
+                    until
+                    <input
+                      type="time"
+                      value={settings.quiet.until}
+                      onChange={(e) => e.target.value && void saveSetting({ quiet: { ...settings.quiet!, until: e.target.value } })}
+                    />
+                  </label>
+                </div>
+              )}
+              <details className="site-hours">
+                <summary>How often each site is read</summary>
+                <div className="sub">Automatic scrapes only; “Refresh now” reads every site. Sites with strict limits are best read once a day.</div>
+                {SOURCES.filter((src) => src.enabled || src.api).map((src) => (
+                  <label key={src.id} className="site-row">
+                    <span>{src.name}</span>
+                    <select
+                      value={settings ? hoursFor(settings.siteHours, src.id) : 0}
+                      disabled={!settings}
+                      onChange={(e) => settings && void saveSetting({ siteHours: { ...settings.siteHours, [src.id]: Number(e.target.value) } })}
+                    >
+                      {SITE_FREQUENCIES.map((f) => (
+                        <option key={f.hours} value={f.hours}>{f.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </details>
             </div>
           )}
         </div>
@@ -404,6 +456,11 @@ export default function Home() {
         <div className="notice">
           {`${failed.length} source(s) failed: ${failed.map(([id, s]) => `${id} (${s.error ?? "error"})`).join("; ")}`}
           {failed.some(([, s]) => s.blocked) && " · a site that refused is left alone for a day or more, then tried again"}
+        </div>
+      )}
+      {data && !running && notDue.length > 0 && (
+        <div className="notice">
+          {`Not read in the last automatic scrape (read less often, see Scraper settings): ${notDue.map(([id]) => SOURCES.find((x) => x.id === id)?.name ?? id).join(", ")}`}
         </div>
       )}
       {data && !running && resting.length > 0 && (

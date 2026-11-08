@@ -326,6 +326,13 @@ describe("staying welcome", () => {
     }
   });
 
+  it("Leboncoin asks for at most five pages a run, 10 seconds apart", () => {
+    const s = SOURCES.find((x) => x.id === "leboncoin")!;
+    const searches = s.paged!(true);
+    assert.equal(searches.reduce((sum, p) => sum + p.maxPages, 0), 5);
+    assert.equal(s.delaySecs, 10);
+  });
+
   it("mobile.de is only on with API credentials, and never crawled", () => {
     const s = SOURCES.find((x) => x.id === "mobile-de")!;
     assert.equal(s.api, true);

@@ -1,5 +1,5 @@
-import { DEFAULT_INTERVAL_MINUTES, nextRun, type Schedule } from "./schedule";
-import { loadSettings } from "./settings";
+import { nextRun, type Schedule } from "./schedule";
+import { DEFAULT_SETTINGS, loadSettings, type ScraperSettings } from "./settings";
 import { readStatus } from "./store";
 import { closeStaleRuns, lastRunStartedAt } from "./supabase";
 import { triggerScrape } from "./trigger";
@@ -8,12 +8,12 @@ const CHECK_EVERY_MS = 15_000;
 /** A scrape still marked running after this long belongs to a server that died. */
 const INTERRUPTED_AFTER_MS = 30 * 60_000;
 
-async function intervalMinutes(): Promise<number> {
+async function settings(): Promise<ScraperSettings> {
   try {
-    return (await loadSettings()).intervalMinutes;
+    return await loadSettings();
   } catch (e) {
-    console.warn(`[scheduler] ${(e as Error).message}: using ${DEFAULT_INTERVAL_MINUTES} min`);
-    return DEFAULT_INTERVAL_MINUTES;
+    console.warn(`[scheduler] ${(e as Error).message}: using the default schedule`);
+    return DEFAULT_SETTINGS;
   }
 }
 
@@ -34,7 +34,8 @@ async function lastStartMs(): Promise<number | null> {
 /** null when automatic scraping is switched off. */
 export async function getSchedule(): Promise<Schedule | null> {
   if (process.env.AUTO_SCRAPE === "false") return null;
-  return nextRun(await lastStartMs(), await intervalMinutes());
+  const { intervalMinutes, quiet } = await settings();
+  return nextRun(await lastStartMs(), intervalMinutes, Date.now(), quiet);
 }
 
 /** Runs in the web server: scrapes whenever the next time has come, including right at startup if it was missed. */
@@ -44,7 +45,7 @@ export async function startScheduler() {
   if (first) {
     const left = Date.parse(first.nextRunAt) - Date.now();
     console.log(
-      `[scheduler] scraping every ${first.intervalMinutes} min; ` +
+      `[scheduler] scraping every ${first.intervalMinutes} min${first.quiet ? `, not from ${first.quiet.from} to ${first.quiet.until} German time` : ""}; ` +
         (left > 0 ? `next in ${Math.ceil(left / 60_000)} min` : "the last scrape is overdue, scraping now"),
     );
   }

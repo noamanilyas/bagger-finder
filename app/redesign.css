@@ -309,3 +309,12 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-line
 
 /* the site's own price under the euro value, for ads in other currencies */
 .price .orig { display: block; font-size: 11px; font-weight: 400; opacity: 0.7; text-align: right; }
+
+/* scraper settings: quiet hours and how often each site is read */
+.settings .quiet-times { display: flex; gap: 12px; margin: 4px 0 8px 28px; }
+.settings .quiet-times label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.settings .site-hours { margin-top: 8px; }
+.settings .site-hours summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+.settings .site-hours .site-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
+.settings .site-hours .site-row select { max-width: 150px; }
+.settings .site-hours { max-height: 50vh; overflow-y: auto; }
