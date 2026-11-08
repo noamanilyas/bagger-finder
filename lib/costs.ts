@@ -94,3 +94,19 @@ export function costPanel(priceEur: number | null, rate: PkrRate | null, negotia
     rateNote: rate ? `€1 = Rs ${rate.rate.toFixed(2)} (${rate.source})` : "Exchange rate not available",
   };
 }
+
+/** The price slider on a map card: how far below the asking price it reaches, and its step. */
+export const OFFER_SLIDER = { maxPct: 30, stepEur: 100 };
+
+/** Slider bounds for a price: from the deepest discount (rounded down to a step) up to the asking price. */
+export function offerRange(priceEur: number): { min: number; max: number; step: number } {
+  const step = OFFER_SLIDER.stepEur;
+  const min = Math.floor((priceEur * (100 - OFFER_SLIDER.maxPct)) / 100 / step) * step;
+  return { min: Math.max(0, min), max: priceEur, step };
+}
+
+/** What a machine lands at in Pakistan if bought for `offerEur`: the rupee total when there is a rate, and the euro total. */
+export function landedAt(offerEur: number, rate: PkrRate | null): { pkr: string | null; eur: string } {
+  const p = costPanel(offerEur, rate, false);
+  return { pkr: p.pkr, eur: p.eur };
+}

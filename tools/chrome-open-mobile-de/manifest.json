@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Open mobile.de Search",
-  "version": "2.0.0",
+  "version": "4.1.0",
+  "host_permissions": ["http://localhost:3000/*"],
   "description": "Opens the mobile.de construction machine search in a new tab.",
   "background": {
     "service_worker": "background.js"

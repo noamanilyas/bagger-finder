@@ -46,6 +46,8 @@ export type Listing = {
   aiCheckKey: string | null;
   /** the buyer's comments that match this ad (see lib/knowledge.ts); added when reading, not stored on the listing */
   knowledge?: { id: number; note: string; interesting: boolean; thisAdOnly: boolean }[];
+  /** other ads of the same machine, on other sites or repeated on one (see lib/duplicates.ts); added when reading */
+  alsoOn?: { id: string; source: string; url: string }[];
 };
 
 /** The short id shown on cards and map popups, to name one listing. Unique in practice, and the search box finds it. */

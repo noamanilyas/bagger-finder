@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { costPanel, negotiatedText, type PkrRate } from "@/lib/costs";
+import { costPanel, landedAt, negotiatedText, offerRange, type PkrRate } from "@/lib/costs";
 import { originalPrice } from "@/lib/currency";
 import { isSaleAd } from "@/lib/market";
 import { shortId, type Listing } from "@/lib/types";
@@ -51,6 +51,50 @@ const STAR = (filled: boolean) =>
 
 const euro = (n: number) => `€${n.toLocaleString("de-DE")}`;
 
+/** "What if I pay less?": slide the price down to 30% below asking and see what it lands at in Pakistan. */
+function offerSlider(priceEur: number, rate: PkrRate | null): HTMLElement {
+  const { min, max, step } = offerRange(priceEur);
+  const box = element("div", "popup-offer");
+  const head = element("div", "popup-offer-head");
+  const label = element("label", "popup-kv", "If you pay") as HTMLLabelElement;
+  const paid = element("strong", "popup-offer-price");
+  head.append(label, paid);
+
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(max);
+  input.id = `offer-${Math.random().toString(36).slice(2)}`;
+  label.htmlFor = input.id;
+  const ends = element("div", "popup-offer-ends");
+  ends.append(element("span", "", `${euro(min)} (−${Math.round(((max - min) / max) * 100)}%)`), element("span", "", `${euro(max)} asking`));
+
+  const landed = element("div", "popup-offer-landed");
+  const update = () => {
+    const value = Number(input.value);
+    const off = Math.round(((max - value) / max) * 100);
+    paid.textContent = off > 0 ? `${euro(value)} · −${off}%` : `${euro(value)} · asking`;
+    const at = landedAt(value, rate);
+    landed.replaceChildren(element("span", "popup-kv", "Lands in Pakistan at"), element("strong", "", at.pkr ?? at.eur));
+    if (at.pkr) landed.append(element("span", "cost-note", at.eur));
+    if (off > 0 && rate) {
+      const savedLakh = Number((((max - value) * rate.rate) / 100_000).toFixed(1));
+      landed.append(element("span", "cost-note", `Rs ${savedLakh} lakh (${euro(max - value)}) less than at the asking price`));
+    } else if (off > 0) {
+      landed.append(element("span", "cost-note", `${euro(max - value)} less than at the asking price (${landedAt(max, rate).eur})`));
+    }
+  };
+  input.addEventListener("input", update);
+  // dragging the slider must not drag the map
+  L.DomEvent.disableClickPropagation(box);
+  update();
+
+  box.append(head, input, ends, landed);
+  return box;
+}
+
 function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => void, onPhoto?: (id: string) => void): HTMLElement {
   const p = costPanel(l.priceEur, rate, isSaleAd(l));
   const root = element("div", "popup");
@@ -94,6 +138,8 @@ function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => voi
   const boxes = element("div", "popup-boxes");
   boxes.append(here, pk);
 
+  const offer = l.priceEur != null && isSaleAd(l) ? offerSlider(l.priceEur, rate) : null;
+
   const more = element("details", "popup-more");
   more.append(element("summary", "", "Cost breakdown"));
   if (p.negotiated) more.append(element("div", "cost-note", p.negotiated));
@@ -118,7 +164,7 @@ function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => voi
     actions.append(mark);
   }
 
-  root.append(title, meta, boxes, more, actions);
+  root.append(title, meta, boxes, ...(offer ? [offer] : []), more, actions);
   return root;
 }
 

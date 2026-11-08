@@ -45,7 +45,7 @@ describe("parseMachine", () => {
     assert.ok(typeof m === "object");
     assert.equal(m.currency, "EUR");
     assert.equal(m.adType, "sale");
-    assert.equal(m.source, "External");
+    assert.equal(m.source, null); // named when stored: the scraped source of the address, or "External"
     assert.equal(m.price, 12000);
     assert.equal(m.year, 2010);
   });
@@ -92,9 +92,55 @@ describe("ingestMachines", () => {
     assert.equal(listings[0].firstSeen, firstSeen);
   });
 
+  it("marks no site as extracted while none is listed", async () => {
+    const result = await ingest.ingestMachines([], "mobile.de");
+    assert.deepEqual(result.extracted, []);
+  });
+
+  it("remembers when each external site was last received", async () => {
+    const received = await import("../lib/external-received");
+    await received.markReceived(["mobile.de", "mobile.de", "abc.com"], "2026-11-08T12:00:00.000Z");
+    assert.deepEqual(await received.loadLastReceived(), { "mobile.de": "2026-11-08T12:00:00.000Z", "abc.com": "2026-11-08T12:00:00.000Z" });
+  });
+
   it("rejects a machine above the price limit", async () => {
     const result = await ingest.ingestMachines([{ ...machine, url: "https://dealer.example/ads/124", price: 900_000 }]);
     assert.equal(result.stored.length, 0);
     assert.match(result.rejected[0].reason, /limits/);
+  });
+
+  it("turns down parts and unwanted sizes even when a modelKey is sent, as the scraper does", async () => {
+    const result = await ingest.ingestMachines([
+      { ...machine, url: "https://dealer.example/ads/200", title: "Hydraulikpumpe für Doosan DX140W", modelKey: "doosan-dx140" },
+      { ...machine, url: "https://dealer.example/ads/201", title: "Doosan DX150W Mobilbagger", model: "DX150W", modelKey: "doosan-dx140" },
+    ]);
+    assert.equal(result.stored.length, 0);
+    assert.deepEqual(
+      result.rejected.map((r) => r.index),
+      [0, 1],
+    );
+  });
+
+  it("rejects a modelKey that does not match the ad's text", async () => {
+    const result = await ingest.ingestMachines([{ ...machine, url: "https://dealer.example/ads/202", modelKey: "hyundai-55" }]);
+    assert.equal(result.stored.length, 0);
+    assert.match(result.rejected[0].reason, /modelKey/);
+  });
+
+  it("names a machine from a scraped site after that site", async () => {
+    const config = await import("../lib/config");
+    assert.equal(config.sourceOfUrl("https://suchen.mobile.de/fahrzeuge/details.html?id=1")?.id, "mobile-de");
+    assert.equal(config.sourceOfUrl("https://dealer.example/ads/1"), null);
+    const result = await ingest.ingestMachines([{ ...machine, url: "https://suchen.mobile.de/fahrzeuge/details.html?id=1", source: undefined }]);
+    assert.equal(result.stored.length, 1, JSON.stringify(result.rejected));
+    assert.equal(store.readDb().listings.find((l) => l.id === result.stored[0].id)?.source, "mobile.de");
+  });
+
+  it("stores a mobile.de ad once, whichever search it was opened from", async () => {
+    const base = "https://suchen.mobile.de/fahrzeuge/details.html?id=448460422&vc=ConstructionMachine&c=MobileDigger";
+    const a = listingId(`${base}&pageNumber=3&ref=srp&refId=26b5&searchId=26b5`);
+    const b = listingId(`${base}&ref=srp&refId=b6c0&searchId=b6c0&action=topOfPage`);
+    assert.equal(a, b);
+    assert.equal(a, listingId("https://suchen.mobile.de/fahrzeuge/details.html?id=448460422"));
   });
 });

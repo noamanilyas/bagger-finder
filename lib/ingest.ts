@@ -4,12 +4,14 @@
  * geocoded, compared with the market and stored like scraped listings, under the same id an ad with that address
  * gets from the scraper, so a machine that is both sent and scraped is stored once.
  */
-import { isWheeled, matchModel, scrapeLimits, WANTED, withinLimits, fitsMobileOnly, type WantedModel } from "./config";
+import { classify, isWheeled, scrapeLimits, sourceOfUrl, WANTED, withinLimits, fitsMobileOnly, type WantedModel } from "./config";
 import { expandCountryCode, inEurope, isExcludedPlace } from "./countries";
 import { isCurrency, setEurRates, toEur, type Currency } from "./currency";
 import { loadEurRates } from "./fx";
 import { listingId, normalizeUrl } from "./listing-id";
 import { applyMarket } from "./market";
+import { markReceived } from "./external-received";
+import { normalizeSite, siteOfUrl } from "./external-sites";
 import { loadSettings } from "./settings";
 import { readDb, readGeoCache, writeDb } from "./store";
 import { hasSupabase, loadListings, recordHistory, saveListings } from "./supabase";
@@ -29,9 +31,10 @@ export type IncomingMachine = {
   description: string | null;
   make: string | null;
   model: string | null;
-  /** a key from lib/config.ts WANTED; otherwise the model is matched from the text, as for scraped ads */
+  /** a key from lib/config.ts WANTED. Checked only: the model is always matched from the text, as for scraped ads */
   modelKey: string | null;
-  source: string;
+  /** null: the scraped source the address belongs to, or "External" */
+  source: string | null;
   price: number | null;
   currency: Currency;
   year: number | null;
@@ -92,7 +95,7 @@ export function parseMachine(input: unknown): IncomingMachine | string {
     make: text(m.make, 100),
     model: text(m.model, 100),
     modelKey,
-    source: text(m.source, 100) ?? "External",
+    source: text(m.source, 100),
     price: num(m.price ?? m.priceEur),
     currency,
     year: year == null ? null : Math.round(year),
@@ -110,21 +113,45 @@ export type IngestResult = {
   stored: { index: number; id: string; url: string; created: boolean }[];
   /** machines left out, with the reason */
   rejected: { index: number; url: string | null; reason: string }[];
+  /** listed external sites marked as extracted now (see lib/external-sites.ts) */
+  extracted: string[];
 };
 
 /** One ingest at a time: the local listings file is read, changed and written whole. */
 let queue: Promise<unknown> = Promise.resolve();
 
-export function ingestMachines(inputs: unknown[]): Promise<IngestResult> {
-  const run = queue.then(() => ingest(inputs));
+/**
+ * Stores the machines. `site` names the external site they were extracted from: it is marked as extracted even when
+ * no machines are sent (nothing new there). Without it, the sites are taken from the machines' addresses.
+ */
+export function ingestMachines(inputs: unknown[], site: string | null = null): Promise<IngestResult> {
+  const run = queue.then(() => ingest(inputs, site));
   queue = run.catch(() => undefined);
   return run;
 }
 
-async function ingest(inputs: unknown[]): Promise<IngestResult> {
-  const result: IngestResult = { stored: [], rejected: [] };
+async function ingest(inputs: unknown[], site: string | null): Promise<IngestResult> {
+  const result: IngestResult = { stored: [], rejected: [], extracted: [] };
   const now = new Date().toISOString();
   const settings = await loadSettings();
+
+  // A site counts as extracted when machines from it arrive, whether or not they pass the rules below.
+  const extracted = new Set<string>();
+  const named = site ? settings.externalSites.find((s) => s.site === normalizeSite(site)) : null;
+  if (named) extracted.add(named.site);
+  else {
+    for (const input of inputs) {
+      const m = parseMachine(input);
+      const listed = typeof m === "object" ? siteOfUrl(m.url, settings.externalSites) : null;
+      if (listed) extracted.add(listed.site);
+    }
+  }
+  result.extracted = [...extracted];
+  if (inputs.length === 0) {
+    await markReceived(extracted, now);
+    return result;
+  }
+
   const limits = scrapeLimits();
   setEurRates(await loadEurRates());
 
@@ -143,11 +170,20 @@ async function ingest(inputs: unknown[]): Promise<IngestResult> {
     }
     const reject = (reason: string) => result.rejected.push({ index, url: m.url, reason });
 
+    // The same model check as a scraped ad, in the languages of the site it came from: parts, rentals, "wanted"
+    // ads and unwanted sizes are turned down even when a modelKey is sent.
+    const scraperSource = sourceOfUrl(m.url);
+    const languages = scraperSource?.languages;
     const label = `${m.title} ${m.make ?? ""} ${m.model ?? ""}`;
-    const wanted: WantedModel | null =
-      WANTED.find((w) => w.key === m.modelKey) ?? matchModel(label) ?? matchModel(`${label} ${m.description ?? ""}`);
+    const byLabel = classify(label, languages);
+    const decision = byLabel.model ? byLabel : classify(`${label} ${m.description ?? ""}`, languages);
+    const wanted: WantedModel | null = decision.model;
     if (!wanted) {
-      reject("not one of the wanted models (send modelKey, or name the make and model in the title)");
+      reject(`not one of the wanted models: ${decision.reason}`);
+      continue;
+    }
+    if (m.modelKey && m.modelKey !== wanted.key) {
+      reject(`modelKey "${m.modelKey}" does not match the ad, which reads as ${wanted.label}`);
       continue;
     }
     const priceEur = m.currency === "EUR" ? m.price : toEur(m.price, m.currency);
@@ -178,7 +214,7 @@ async function ingest(inputs: unknown[]): Promise<IngestResult> {
         ? { lat: m.lat, lng: m.lng }
         : prev && prev.location === location && prev.lat != null
           ? { lat: prev.lat, lng: prev.lng! }
-          : await geocode(location, cache, null);
+          : await geocode(location, cache, scraperSource?.defaultCountry ?? null);
     if (coords && !inEurope(coords)) {
       reject("located outside Europe");
       continue;
@@ -187,7 +223,7 @@ async function ingest(inputs: unknown[]): Promise<IngestResult> {
     const listing: Listing = {
       id,
       url,
-      source: m.source,
+      source: m.source ?? scraperSource?.name ?? "External",
       title: m.title,
       description: m.description ?? "",
       make: m.make,
@@ -228,7 +264,10 @@ async function ingest(inputs: unknown[]): Promise<IngestResult> {
     result.stored.push({ index, id, url, created: !storedBefore.has(id) });
   }
 
-  if (changed.size === 0) return result;
+  if (changed.size === 0) {
+    await markReceived(extracted, now);
+    return result;
+  }
   // Compared with all stored machines, as after a scrape.
   const listings = applyMarket([...byId.values()]);
   const sent = listings.filter((l) => changed.has(l.id));
@@ -241,6 +280,7 @@ async function ingest(inputs: unknown[]): Promise<IngestResult> {
     }
   }
   writeDb({ updatedAt: now, listings }); // local copy / fallback
+  await markReceived(extracted, now); // after storing: a failed write leaves the site due
   console.log(`[ingest] ${sent.length} stored, ${result.rejected.length} rejected`);
   return result;
 }

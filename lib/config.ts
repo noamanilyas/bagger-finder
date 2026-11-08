@@ -34,7 +34,6 @@ const CAT = /caterpillar|(?<![a-z])cat(?![a-z])/i;
 const HITACHI = /hitachi/i;
 const JCB = /jcb/i;
 const SAMSUNG = /samsung|sumsung/i;
-const DYNAPAC = /dyna?p[ae]c/i;
 
 /** "Doosan 140-WV" and "Daewoo 225 LC" name the size without DX or Solar. Only with W or LC behind it: "Doosan 140 PS" is no model. */
 const makeAndSize = (n: number) => String.raw`(?:do{1,2}san|develon|daewoo)\s*-?\s*${n}\s*-?\s*(?:w|n?lc)`;
@@ -93,8 +92,6 @@ export const WANTED: WantedModel[] = [
   // The owner's model list of 2026-11-07. Each size has its own key, because prices are compared per key.
   { key: "doosan-dx57", label: "Doosan DX57", make: DOOSAN, number: dx(57) },
   { key: "doosan-dx170", label: "Doosan DX170", make: DOOSAN, number: dx(170) },
-  { key: "doosan-dx225", label: "Doosan DX225", make: DOOSAN, number: dx(225), anyType: true },
-  { key: "doosan-dx300", label: "Doosan DX300", make: DOOSAN, number: dx(300), anyType: true },
   { key: "doosan-dh130", label: "Doosan DH130", make: DOOSAN, number: /dh\s*-?\s*130(?!\d)/i },
   { key: "solar-55", label: "Solar 55", make: SOLAR, number: solar(55) },
   { key: "solar-80", label: "Solar 80", make: SOLAR, number: solar(80) },
@@ -125,9 +122,6 @@ export const WANTED: WantedModel[] = [
   loader("cat-972h", "Cat 972H", catSuffix(972, "H")),
   loader("cat-980g2", "Cat 980G / G II", series2(980, "g")),
   loader("cat-980h", "Cat 980H", catSuffix(980, "H")),
-  { key: "dynapac-ca2510", label: "Dynapac CA2510", make: DYNAPAC, number: /(?<![a-z])ca\s*-?\s*2510(?!\d)/i, anyType: true },
-  // any Dynapac roller: by the word, or by its model series (CA soil compactors, CC and CG tandem rollers)
-  { key: "dynapac-roller", label: "Dynapac roller", make: DYNAPAC, number: /(?:)/, needsWord: ROLLER_WORD, strong: /(?<![a-z])c[acg]\s*-?\s*\d{2,4}/i, anyType: true },
 ];
 
 /**
@@ -206,7 +200,7 @@ export function fitsMobileOnly(model: WantedModel, text: string, title?: string 
 
 /** Cheap pre-filter so we only send plausible blocks to the AI. */
 export function looksRelevant(text: string): boolean {
-  return /yanmar|do{1,2}san|develon|daewoo|hyundai|solar|hitachi|volvo|caterpillar|jcb|samsung|sumsung|dyna?p[ae]c/i.test(text) || CAT.test(text) || /\bdx\s*-?\s*\d{2,3}/i.test(text);
+  return /yanmar|do{1,2}san|develon|daewoo|hyundai|solar|hitachi|volvo|caterpillar|jcb|samsung|sumsung/i.test(text) || CAT.test(text) || /\bdx\s*-?\s*\d{2,3}/i.test(text);
 }
 
 /** null means no limit. */
@@ -249,7 +243,7 @@ export function withinLimits(item: { priceEur: number | null; year: number | nul
 }
 
 /** Machineryline's make numbers. */
-const ML_MAKE = { doosan: 3881, hyundai: 2611, yanmar: 3015, hitachi: 2604, jcb: 2618, volvo: 2819, cat: 2512, dynapac: 2544 };
+const ML_MAKE = { doosan: 3881, hyundai: 2611, yanmar: 3015, hitachi: 2604, jcb: 2618, volvo: 2819, cat: 2512 };
 
 /**
  * Machineryline's own filter per category and make, built up to the max year.
@@ -260,7 +254,7 @@ function machinerylinePages(mobileOnly: boolean): string[] {
   const { maxYear } = scrapeLimits();
   const scale = maxYear === DEFAULT_LIMITS.maxYear ? 1 : 3;
   const year = maxYear != null ? `ym=%3A${maxYear}&` : "";
-  const { doosan, hyundai, yanmar, hitachi, jcb, volvo, cat, dynapac } = ML_MAKE;
+  const { doosan, hyundai, yanmar, hitachi, jcb, volvo, cat } = ML_MAKE;
   const search = (path: string, makes: number[], pages: number) =>
     range(pages * scale).map((n) => `https://machineryline.de/-/${path}?${year}${makes.length ? `mark_id=${makes.join("%3B")}&` : ""}page=${n}`);
   return [
@@ -277,11 +271,8 @@ function machinerylinePages(mobileOnly: boolean): string[] {
     ...search("Kettenbagger--c167", [hitachi, jcb], 17),
     ...search("Midibagger--c5601", [hitachi, jcb], 2),
     ...search("Minibagger--c166", [hitachi], 2),
-    ...search("Kettenbagger/Doosan/DX225--c167tm3881m6581", [], 3),
-    ...search("Kettenbagger/Doosan/DX300--c167tm3881m6583", [], 3),
     ...search("Radlader--c180", [cat], 22),
     ...search("Grader--c130", [cat], 8),
-    ...search("Walzen--c2439", [dynapac], 8),
   ];
 }
 
@@ -322,6 +313,10 @@ export type Source = {
   browser?: boolean;
   /** false: never send this site's text to AI models, for example when its robots.txt says ai-train=no */
   ai?: boolean;
+  /** the site's host names, when its search pages do not give them (API sources); used by sourceOfUrl */
+  hosts?: string[];
+  /** drop an ad whose card names no place: on this site only resellers outside Europe leave it out */
+  needsLocation?: boolean;
 };
 
 const dash = (q: string) => q.trim().toLowerCase().replace(/\s+/g, "-");
@@ -345,7 +340,6 @@ export const NATIONAL_QUERIES = [
   "yanmar",
   "hitachi",
   "samsung",
-  "dynapac",
   "volvo ew170",
   "jcb js140",
   "jcb js145",
@@ -386,7 +380,6 @@ function landwirtSearches(mobileOnly: boolean): PagedSearch[] {
     ["minibagger", ["hitachi", ...(mobileOnly ? [] : ["doosan", "hyundai", "yanmar"])]],
     ["radlader", ["cat"]],
     ["grader", ["cat"]],
-    ["walzen", ["dynapac"]],
   ];
   return pairs.flatMap(([category, makes]) =>
     makes.map((make) => ({
@@ -422,7 +415,7 @@ const olxGroupListing = (host: string, section: string) => (url: string) =>
  * Develon page). Their order changes per request, so one scrape may miss a machine that the next one finds.
  * These pages also hold lathes and forklifts: classify() turns those down. Its /main/ search is closed by robots.txt.
  */
-const MASCHINENSUCHER_PAGES = { doosan: 8, hyundai: 6, yanmar: 2, volvo: 8, caterpillar: 8, jcb: 8, hitachi: 4, daewoo: 3, dynapac: 1, samsung: 1 };
+const MASCHINENSUCHER_PAGES = { doosan: 8, hyundai: 6, yanmar: 2, volvo: 8, caterpillar: 8, jcb: 8, hitachi: 4, daewoo: 3, samsung: 1 };
 
 /** TruckScout24 filters a make page by its own model names. A name the site does not know does no harm. */
 const ts24Models = (make: string, models: string[], pages: number) =>
@@ -504,10 +497,6 @@ const TEXT_QUERIES = [
 /** The rest of that list: not only wheeled, so these run whatever the "only scrape Mobilbagger" setting says. */
 const ANY_TYPE_QUERIES = [
   "volvo ew170",
-  "doosan dx 225",
-  "doosan dx225",
-  "doosan dx 300",
-  "doosan dx300",
   "solar 130 lc",
   "solar 225",
   "solar 300",
@@ -534,9 +523,6 @@ const ANY_TYPE_QUERIES = [
   "cat 972h",
   "cat 980g",
   "cat 980h",
-  "dynapac walze",
-  "dynapac ca 2510",
-  "dynapac ca2510",
 ];
 
 /** Searches aimed at wheeled machines: they name the type or end in the "W" of the model. */
@@ -574,7 +560,6 @@ export const SOURCES: Source[] = [
       // The other makes: the site shows a whole make whichever category is asked for (see TODO.md), so read the make once.
       ...range(5).map((n) => `${TS24}/alle/hitachi${n > 1 ? `?page=${n}` : ""}`),
       `${TS24}/alle/daewoo`,
-      ...range(2).map((n) => `${TS24}/walze/dynapac${n > 1 ? `?page=${n}` : ""}`),
       // 592 Caterpillar, 585 JCB and 2025 Volvo ads on 2026-11-07, so these ask for the models.
       ...ts24Models("caterpillar", ["120", "120G", "120H", "120K", "120M", "130G", "130H", "140", "140 AWD", "140G", "140H", "140K", "140M"], 1),
       ...ts24Models("caterpillar", ["966", "966F", "966G", "970", "970F", "972", "972G", "972H", "980", "980G", "980H"], 2),
@@ -643,8 +628,6 @@ export const SOURCES: Source[] = [
         "raupenbagger/samsung": 1,
         "raupenbagger/daewoo": 1,
         "raupenbagger/develon": 3,
-        "raupenbagger/doosan,dx225": 8,
-        "raupenbagger/doosan,dx300": 5,
         "raupenbagger/hitachi,ex60": 1,
         "raupenbagger/hitachi,ex100": 1,
         "raupenbagger/hitachi,ex120": 1,
@@ -656,7 +639,6 @@ export const SOURCES: Source[] = [
         "radlader/cat,966": 13,
         "radlader/cat,972": 5,
         "radlader/cat,980": 7,
-        "walzen/dynapac": 11,
         ...(mobileOnly ? {} : { "raupenbagger/doosan,dx140": 5 }),
       }).flatMap(([path, pages]) =>
         range(pages).map((n) => {
@@ -691,7 +673,6 @@ export const SOURCES: Source[] = [
         "jcb-crawler-excavator/~a2b1c2e384/used.html": 4,
         "caterpillar-wheel-loader/~a2b3c12e133/used.html": 24,
         "caterpillar-grader/2-6-133/used-caterpillar-grader.html": 9,
-        "dynapac-compactor/2-9-212/used-dynapac-compactor.html": 7,
         ...(mobileOnly ? {} : { "hyundai-crawler-excavator/~a2b1c2e355/used.html": 4 }),
       }).flatMap(([path, pages]) =>
         range(pages).map((n) => `https://www.europe-construction-equipment.com/${path}${n > 1 ? `?p=${n}` : ""}`),
@@ -702,6 +683,9 @@ export const SOURCES: Source[] = [
     id: "truck1",
     name: "Truck1",
     enabled: true,
+    // Its usual card ends in "Germany, Goch". A second layout ("Year of manufacture: 1993, hours: …") has no place,
+    // and those seen on 2026-11-08 were all sold from China.
+    needsLocation: true,
     languages: ["en"],
     defaultCountry: null,
     browser: true,
@@ -722,7 +706,6 @@ export const SOURCES: Source[] = [
         "crawler-excavators/jcb": 3,
         "wheel-loaders/caterpillar": 12,
         "graders/caterpillar": 3,
-        "road-rollers/dynapac": 3,
       }).flatMap(([path, pages]) =>
         range(pages).map((n) => `https://www.truck1.eu/construction-machinery/${path}${n > 1 ? `?page=${n}` : ""}`),
       ),
@@ -912,7 +895,7 @@ export const SOURCES: Source[] = [
     // Only the plain address: the same card also links to "#video_show" and "?video_display=Y".
     isListing: (url) => /^https:\/\/www\.nettikone\.com\/[a-z0-9-]+\/[a-z0-9-]+\/\d{5,}$/.test(url),
     paged: () =>
-      ["doosan", "develon", "daewoo", "hyundai", "yanmar", "hitachi", "samsung", "dynapac"].map((make) => ({
+      ["doosan", "develon", "daewoo", "hyundai", "yanmar", "hitachi", "samsung"].map((make) => ({
         page: (n: number) => `https://www.nettikone.com/${make}${n > 1 ? `?page=${n}` : ""}`,
         maxPages: NATIONAL_MAX_PAGES,
       })),
@@ -965,6 +948,7 @@ export const SOURCES: Source[] = [
     // Official Search-API, once mobile.de grants an API-Account (scraper/mobile-de-api.ts). Without credentials it does nothing.
     id: "mobile-de",
     name: "mobile.de",
+    hosts: ["mobile.de"],
     enabled: !!(process.env.MOBILE_DE_API_USER && process.env.MOBILE_DE_API_PASSWORD),
     api: true,
     languages: ["de"],
@@ -972,3 +956,35 @@ export const SOURCES: Source[] = [
     ai: false,
   },
 ];
+
+const hostOf = (url: string): string | null => {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+};
+
+let sourceHosts: { host: string; source: Source }[] | null = null;
+
+/**
+ * The scraped source an ad address belongs to ("https://suchen.mobile.de/..." is mobile.de), or null.
+ * Machines sent to POST /api/ingest are checked with that source's languages, as the scraper checks them.
+ */
+export function sourceOfUrl(url: string): Source | null {
+  const host = hostOf(url);
+  if (!host) return null;
+  sourceHosts ??= SOURCES.flatMap((source) => {
+    const hosts = new Set(source.hosts ?? []);
+    for (const u of seedUrls(source, false)) {
+      const h = hostOf(u);
+      if (h) hosts.add(h);
+    }
+    return [...hosts].map((h) => ({ host: h, source }));
+  });
+  let best: { host: string; source: Source } | null = null;
+  for (const e of sourceHosts) {
+    if ((host === e.host || host.endsWith(`.${e.host}`)) && (!best || e.host.length > best.host.length)) best = e;
+  }
+  return best?.source ?? null;
+}

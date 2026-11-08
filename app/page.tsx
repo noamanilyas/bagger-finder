@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AddComment, { isMarked, StarIcon } from "@/components/AddComment";
 import ConfirmScrape from "@/components/ConfirmScrape";
+import ExternalSites from "@/components/ExternalSites";
 import NextScrape from "@/components/NextScrape";
 import PhotoViewer from "@/components/PhotoViewer";
 import SignOut from "@/components/SignOut";
@@ -143,6 +144,10 @@ const VIEWS = [
 ] as const;
 type View = (typeof VIEWS)[number][0];
 
+/** A usable asking price: not "price on request", and not a placeholder like 0 or 1 €. */
+const MIN_REAL_PRICE_EUR = 1000;
+const hasRealPrice = (l: { priceEur: number | null }) => l.priceEur != null && l.priceEur >= MIN_REAL_PRICE_EUR;
+
 export default function Home() {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,8 +161,10 @@ export default function Home() {
   const [selected, setSelected] = useState<string | null>(null);
   const [wheeledOnly, setWheeledOnly] = useState(true);
   const [dealsOnly, setDealsOnly] = useState(false);
+  const [pricedOnly, setPricedOnly] = useState(true);
   const [settings, setSettings] = useState<ScraperSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [externalReceived, setExternalReceived] = useState<Record<string, string>>({});
   const [pkrRate, setPkrRate] = useState<PkrRate | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [view, setView] = useState<View>("split");
@@ -196,7 +203,9 @@ export default function Home() {
     fetch("/api/settings", { cache: "no-store" })
       .then(async (res) => {
         if (!res.ok) throw new Error();
-        setSettings((await res.json()) as ScraperSettings);
+        const { externalLastReceived, ...stored } = (await res.json()) as ScraperSettings & { externalLastReceived?: Record<string, string> };
+        setSettings(stored);
+        setExternalReceived(externalLastReceived ?? {});
       })
       .catch(() => setError("Could not load scraper settings."));
   }, []);
@@ -249,7 +258,10 @@ export default function Home() {
     if (result && !result.started) setError(`Not started: ${result.reason ?? "try again shortly."}`);
   };
 
-  const sources = useMemo(() => [...new Set((data?.listings ?? []).map((l) => l.source))].sort(), [data]);
+  const sources = useMemo(
+    () => [...new Set((data?.listings ?? []).flatMap((l) => [l.source, ...(l.alsoOn ?? []).map((a) => a.source)]))].sort(),
+    [data],
+  );
 
   const visible = useMemo(() => {
     const limits = { maxPrice: limitOf(maxPrice), maxYear: limitOf(maxYear) };
@@ -259,12 +271,13 @@ export default function Home() {
       .filter((l) => models.size === 0 || models.has(l.modelKey))
       .filter((l) => !wheeledOnly || l.wheeled)
       .filter((l) => !dealsOnly || isDeal(l))
-      .filter((l) => source === "all" || l.source === source)
+      .filter((l) => !pricedOnly || hasRealPrice(l))
+      .filter((l) => source === "all" || l.source === source || !!l.alsoOn?.some((a) => a.source === source))
       .filter((l) => withinLimits(l, limits))
       .filter((l) => !modelQ || squash(`${l.title} ${l.make ?? ""} ${l.model ?? ""}`).includes(modelQ))
-      .filter((l) => !q || `${l.id} ${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
+      .filter((l) => !q || `${l.id} ${(l.alsoOn ?? []).map((a) => a.id).join(" ")} ${l.title} ${l.description} ${l.location ?? ""}`.toLowerCase().includes(q))
       .sort(sorter(sort));
-  }, [data, models, source, maxPrice, maxYear, modelText, query, sort, wheeledOnly, dealsOnly]);
+  }, [data, models, source, maxPrice, maxYear, modelText, query, sort, wheeledOnly, dealsOnly, pricedOnly]);
 
   const select = useCallback((id: string) => {
     setSelected(id);
@@ -282,6 +295,7 @@ export default function Home() {
   /** Filters that are on, shown as removable chips while the filter panel is closed. */
   const activeFilters: { label: string; clear: () => void }[] = [
     ...(wheeledOnly ? [{ label: "Mobilbagger", clear: () => setWheeledOnly(false) }] : []),
+    ...(pricedOnly ? [{ label: "With price", clear: () => setPricedOnly(false) }] : []),
     ...(dealsOnly ? [{ label: "Below market", clear: () => setDealsOnly(false) }] : []),
     ...(data?.models ?? []).filter((m) => models.has(m.key)).map((m) => ({ label: m.label, clear: () => toggleModel(m.key) })),
     ...(modelText.trim() ? [{ label: `Model: ${modelText.trim()}`, clear: () => setModelText("") }] : []),
@@ -294,6 +308,7 @@ export default function Home() {
   const resetFilters = () => {
     setWheeledOnly(true);
     setDealsOnly(false);
+    setPricedOnly(true);
     setModels(new Set());
     setModelText("");
     setMaxPrice(String(DEFAULT_LIMITS.maxPrice ?? ""));
@@ -434,6 +449,12 @@ export default function Home() {
                   </label>
                 ))}
               </details>
+              <ExternalSites
+                sites={settings?.externalSites ?? []}
+                lastReceived={externalReceived}
+                disabled={!settings}
+                onChange={(externalSites) => void saveSetting({ externalSites })}
+              />
             </div>
           )}
         </div>
@@ -521,6 +542,9 @@ export default function Home() {
                       <button className={`chip wheel${wheeledOnly ? " on" : ""}`} aria-pressed={wheeledOnly} onClick={() => setWheeledOnly((v) => !v)}>
                         Mobilbagger only
                       </button>
+                      <button className={`chip${pricedOnly ? " on" : ""}`} aria-pressed={pricedOnly} onClick={() => setPricedOnly((v) => !v)} title="Hide price on request and ads without a real price">
+                        With price only
+                      </button>
                       <button className={`chip deal${dealsOnly ? " on" : ""}`} aria-pressed={dealsOnly} onClick={() => setDealsOnly((v) => !v)}>
                         Below market only
                       </button>
@@ -607,8 +631,24 @@ export default function Home() {
                       {!wheeledOnly && l.wheeled && <span className="tag wheel">Mobilbagger</span>}
                       {isDeal(l) && <span className={`tag deal ${l.aiVerdict ?? "unchecked"}`}>{dealLabel(l)}</span>}
                       {l.lat == null && <span className="tag warn">no map location</span>}
-                      <span className="tag source">{l.source}</span>
-                      <span className="tag listing-id" title={`Listing ID ${l.id}`}>#{shortId(l.id)}</span>
+                      {/* where the ad is from and our id for it, kept together so the id never reads as a site */}
+                      <span className="origin">
+                        <span className="tag source">{l.source}</span>
+                        <span className="tag listing-id" title={`Listing ID ${l.id}`}>#{shortId(l.id)}</span>
+                        {l.alsoOn && l.alsoOn.length > 0 && (
+                          <span className="also-on">
+                            also on{" "}
+                            {l.alsoOn.map((a, i) => (
+                              <span key={a.id}>
+                                {i > 0 && ", "}
+                                <a href={a.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title={`Listing ID ${a.id}`}>
+                                  {a.source}
+                                </a>
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </span>
                       {l.priceEur != null && (
                         <span className="to-pk">
                           To PK <strong>{costPanel(l.priceEur, pkrRate, isSaleAd(l)).pkr ?? costPanel(l.priceEur, pkrRate, isSaleAd(l)).eur}</strong>

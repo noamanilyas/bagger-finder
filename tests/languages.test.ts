@@ -191,10 +191,8 @@ describe("the owner's model list of 2026-11-07", () => {
     ["Daewoo Solar 80 W iii Bagger", "solar-80"],
     ["Solar 225LC-V Kettenbagger", "solar-225"],
     ["Solar 225LCV Kettenbagger", "solar-225"],
-    ["Doosan DX225LC-5 Kettenbagger", "doosan-dx225"],
     ["Doosan DX210W Mobilbagger", "doosan-dx210"],
     ["Solar 300LCV Kettenbagger", "solar-300"],
-    ["Doosan DX300LC Kettenbagger", "doosan-dx300"],
     ["Hyundai Robex 130W-3 Mobilbagger", "hyundai-130"],
     ["Hyundai Robex 140W-7 Mobilbagger", "hyundai-140"],
     ["Hyundai Robex 140W-9 Mobilbagger", "hyundai-140"],
@@ -229,10 +227,6 @@ describe("the owner's model list of 2026-11-07", () => {
     ["Sumsung 130W-3 excavator", "samsung-130"],
     ["JCB JS145 Kettenbagger", "jcb-js145"],
     ["JCB JS-140 Kettenbagger", "jcb-js140"],
-    ["Dynapac CA2510 Walze", "dynapac-ca2510"],
-    ["Dynapec CA 2510", "dynapac-ca2510"],
-    ["Dynapac CC 1200 Tandemwalze", "dynapac-roller"],
-    ["Dynapac Walzenzug", "dynapac-roller"],
   ];
 
   it("finds every machine on it, however it is written", () => {
@@ -262,6 +256,10 @@ describe("the owner's model list of 2026-11-07", () => {
       "Volvo EW160 Mobilbagger",
       "Volvo EC170 Kettenbagger",
       "Dynapac F1000 Asphaltfertiger",
+      "Dynapac CA2510 Walze",
+      "Dynapac CC 1200 Tandemwalze",
+      "Doosan DX225LC-5 Kettenbagger",
+      "Doosan DX300LC Kettenbagger",
       "Hyundai R170W-9 Mobilbagger",
       "Hyundai 170 W Mobilbagger",
       "Doosan DX 150 W Bagger",
@@ -308,7 +306,7 @@ describe("the owner's model list of 2026-11-07", () => {
       assert.ok(model, card);
       return fitsMobileOnly(model, card, card);
     };
-    for (const card of ["Caterpillar 966G II Radlader", "Cat 140 Grader", "Dynapac CA2510 Walze", "Hitachi EX60 Kettenbagger", "JCB JS145 Kettenbagger", "Solar 225LC-V Kettenbagger", "Doosan DX225LC Kettenbagger"]) {
+    for (const card of ["Caterpillar 966G II Radlader", "Cat 140 Grader", "Hitachi EX60 Kettenbagger", "JCB JS145 Kettenbagger", "Solar 225LC-V Kettenbagger"]) {
       assert.ok(fits(card), card);
     }
     for (const card of ["Doosan DX140LC Kettenbagger", "Hyundai R140LC-9 Kettenbagger", "Doosan DX 170 LC Bagger"]) {

@@ -2,7 +2,7 @@
 
 Finds used construction machines across Europe on several marketplaces:
 
-- **Doosan / Daewoo / Develon:** DX55, DX57, DX60, DX140, DX160, DX170, DX190, DX210, DX225, DX300, DH130, Solar 55, 80, 130, 140, 170, 225, 300
+- **Doosan / Daewoo / Develon:** DX55, DX57, DX60, DX140, DX160, DX170, DX190, DX210, DH130, Solar 55, 80, 130, 140, 170, 225, 300
 - **Hyundai:** Robex 55, 130W, 140
 - **Yanmar:** 55, including the wheeled B55W
 - **Volvo:** EW170
@@ -10,7 +10,6 @@ Finds used construction machines across Europe on several marketplaces:
 - **JCB:** JS140, JS145, only up to €20,000
 - **Samsung:** MX6W, MX132W, 130W, only built 1990 to 2000
 - **Caterpillar:** graders 120, 130, 140; wheel loaders 966F, 966G, 970F, 972G, 972H, 980G, 980H (sellers rarely write the "II", so both spellings count)
-- **Dynapac:** rollers, including the CA2510
 
 The list lives in `lib/config.ts`. Results are shown on a map: list with sorting and filters on the left, map on the right.
 
@@ -133,13 +132,13 @@ Notes:
 
 ### Ingest API (machines from another system)
 
-`POST /api/ingest` stores machines sent by an external system as if the scraper had found them. Set `INGEST_API_KEY`
-(at least 16 characters, e.g. `openssl rand -hex 32`) and send it as `Authorization: Bearer <key>` or `X-API-Key: <key>`.
-The path skips the WorkOS sign-in; without the variable it answers 503.
+`POST /api/ingest` stores machines sent by an external system as if the scraper had found them. The path skips the
+WorkOS sign-in and, for now, needs no key either: anyone who can reach the server can call it and `/api/ingest/due`.
+`lib/ingest-auth.ts` holds the `INGEST_API_KEY` check, ready to be called from both routes again.
 
 ```sh
 curl -X POST https://<your address>/api/ingest \
-  -H "Authorization: Bearer $INGEST_API_KEY" -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" \
   -d '{"machines": [{
         "url": "https://dealer.example/ads/123",
         "title": "Doosan DX140W Mobilbagger",
@@ -153,16 +152,37 @@ curl -X POST https://<your address>/api/ingest \
 ```
 
 Only `url` and `title` are required. Optional: `description`, `make`, `model`, `modelKey` (a key from `WANTED` in
-`lib/config.ts`, when the text does not name the model), `price` with `currency` (EUR by default; PLN, CZK, HUF, RON,
+`lib/config.ts`; only checked: the model is always read from the text, and a key that does not match it is rejected), `price` with `currency` (EUR by default; PLN, CZK, HUF, RON,
 NOK, DKK, SEK, GBP, CHF), `year`, `hours`, `location`, `lat` + `lng` (skips the map lookup), `imageUrl`, `source` (shown
-as the site name, "External" by default) and `adType` (`sale` by default). The body can also be a bare array or one
+as the site name; by default the scraped site the URL belongs to, such as mobile.de, otherwise "External") and `adType` (`sale` by default). The body can also be a bare array or one
 machine; at most 500 per request.
 
-Each machine goes through the scraper's rules: a wanted model, the price and year limits, the Mobilbagger setting and
+Each machine goes through the scraper's rules, in the languages of the site its URL belongs to: a wanted model (parts,
+rentals, "wanted" ads and unwanted sizes are turned down), the price and year limits, the Mobilbagger setting and
 the European area. The answer lists what was stored (with the listing `id`, and `created` false for an update) and what
 was rejected, with the reason. The id comes from the URL, as for scraped ads, so sending a machine again updates it,
 and an ad that is both sent and scraped is stored once. Like scraped ads, a machine leaves the list 3 days after it was
 last sent or seen, so send machines that are still for sale again at least once a day.
+
+#### Asking whether a site is due
+
+The external system can ask before it extracts a site:
+
+```sh
+curl "https://<your address>/api/ingest/due?sites=mobile.de,abc.com"
+# {"due":true,"sites":[{"site":"mobile.de","listed":true,"due":true,"intervalMinutes":60,"lastReceivedAt":"…","nextDueAt":null},
+#                      {"site":"abc.com","listed":true,"due":false,"intervalMinutes":30,"lastReceivedAt":"…","nextDueAt":"…"}]}
+```
+
+The sites and their intervals are set under Scraper settings → External sites (or `POST /api/settings` with
+`{"externalSites": [{"site": "mobile.de", "intervalMinutes": 60}]}`, the whole list). A site is `due` when it was never
+received, or when its interval has passed since machines from it last arrived; a site not on the list is never due. The
+top-level `due` is true when any site asked about is; without `sites`, every listed site is answered.
+
+A site counts as received when machines whose addresses belong to it are sent to `/api/ingest`
+(`suchen.mobile.de` belongs to `mobile.de`), whether or not they pass the rules above. When the system extracts a site
+and finds nothing new, it sends `{"site": "mobile.de", "machines": []}`, so the site is not due again at once. The
+times are kept in `source_health` under `external:<site>`.
 
 ### mobile.de
 

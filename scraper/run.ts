@@ -10,7 +10,8 @@
  */
 import { CheerioCrawler, Configuration, PlaywrightCrawler } from "crawlee";
 import crypto from "node:crypto";
-import { applyMarket, crossSiteDuplicates } from "../lib/market";
+import { applyMarket } from "../lib/market";
+import { duplicateCount } from "../lib/duplicates";
 import { SOURCES, WANTED, fitsMobileOnly, isWheeled, looksRelevant, matchModel, scrapeLimits, withinLimits, type PagedSearch, type Source } from "../lib/config";
 import { setEurRates, toEur } from "../lib/currency";
 import { loadEurRates } from "../lib/fx";
@@ -486,7 +487,7 @@ async function merge() {
     const drop = () => {
       if (byId.delete(id)) outsideArea.push(id);
     };
-    if (isExcludedPlace(location)) {
+    if (isExcludedPlace(location) || (source.needsLocation && !location?.trim())) {
       drop();
       continue;
     }
@@ -552,8 +553,8 @@ async function merge() {
   const listings = applyMarket(kept);
   const geo = geocodeUsage();
   console.log(`[scrape] map lookups: ${geo.lookups} of ${geo.limit} allowed this run${geo.refused ? " (Nominatim refused, the rest wait for the next run)" : ""}`);
-  const duplicates = crossSiteDuplicates(listings);
-  console.log(`[scrape] on more than one site: ${duplicates.machines} machines, ${duplicates.extraAds} extra ads`);
+  const duplicates = duplicateCount(listings);
+  console.log(`[scrape] advertised more than once: ${duplicates.machines} machines, ${duplicates.extraAds} extra ads (shown once)`);
   save("Checking machines priced well below similar ones…");
   const review = await checkFlagged(listings);
   console.log(

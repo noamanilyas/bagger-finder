@@ -1,3 +1,4 @@
+import { machineOf } from "./duplicates";
 import type { Listing } from "./types";
 
 /** Fewer priced machines than this is not a market: no comparison is made. */
@@ -9,32 +10,6 @@ const YEAR_BAND = 3;
 
 export const isSaleAd = (l: Pick<Listing, "adType">) => l.adType == null || l.adType === "sale";
 
-/** The same machine is often advertised on several sites; it must count once. */
-const machineKey = (l: Listing) => `${l.modelKey}|${l.year ?? ""}|${l.hours ?? ""}|${l.priceEur ?? ""}`;
-
-/**
- * Machines that appear on more than one site, to see how big the duplicate problem is. Only counts ads with a year,
- * hours and a price, because two ads that merely lack those are not the same machine.
- */
-export function crossSiteDuplicates(listings: Listing[]): { machines: number; extraAds: number } {
-  const sites = new Map<string, Set<string>>();
-  const ads = new Map<string, number>();
-  for (const l of listings) {
-    if (l.year == null || l.hours == null || l.priceEur == null) continue;
-    const key = machineKey(l);
-    sites.set(key, (sites.get(key) ?? new Set()).add(l.source));
-    ads.set(key, (ads.get(key) ?? 0) + 1);
-  }
-  let machines = 0;
-  let extraAds = 0;
-  for (const [key, where] of sites) {
-    if (where.size < 2) continue;
-    machines++;
-    extraAds += ads.get(key)! - 1;
-  }
-  return { machines, extraAds };
-}
-
 function median(values: number[]): number {
   const s = [...values].sort((a, b) => a - b);
   const mid = s.length >> 1;
@@ -42,13 +17,14 @@ function median(values: number[]): number {
 }
 
 /** Priced sale ads of the same model and type, each machine once, without the machine itself. */
-function comparablesFor(l: Listing, all: Listing[]): Listing[] {
-  const self = machineKey(l);
+function comparablesFor(l: Listing, all: Listing[], machine: Map<string, string>): Listing[] {
+  const self = machine.get(l.id);
   const seen = new Set<string>();
   const out: Listing[] = [];
   for (const o of all) {
     if (o.modelKey !== l.modelKey || o.wheeled !== l.wheeled || o.priceEur == null || !isSaleAd(o)) continue;
-    const key = machineKey(o);
+    // The same machine is often advertised on several sites; it must count once (see lib/duplicates.ts).
+    const key = machine.get(o.id)!;
     if (key === self || seen.has(key)) continue;
     seen.add(key);
     out.push(o);
@@ -60,10 +36,11 @@ function comparablesFor(l: Listing, all: Listing[]): Listing[] {
 
 /** Fills in the market fields. Only the numbers are decided here; AI verdicts are kept as they are. */
 export function applyMarket(listings: Listing[]): Listing[] {
+  const machine = machineOf(listings);
   return listings.map((l) => {
     const none = { ...l, marketMedian: null, marketCount: null, belowPct: null, flagged: false };
     if (l.priceEur == null || !isSaleAd(l)) return none;
-    const peers = comparablesFor(l, listings);
+    const peers = comparablesFor(l, listings, machine);
     if (peers.length < MIN_COMPARABLES) return none;
     const med = median(peers.map((p) => p.priceEur!));
     const belowPct = Math.round(((med - l.priceEur) / med) * 100);

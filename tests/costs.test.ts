@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { withinLimits } from "../lib/config";
-import { costPanel, negotiatedRange, negotiatedText, withinBudget, type PkrRate } from "../lib/costs";
+import { costPanel, landedAt, negotiatedRange, negotiatedText, offerRange, withinBudget, type PkrRate } from "../lib/costs";
 import { parseMarketRate, parseTapTapRate } from "../lib/fx";
 
 const RATE: PkrRate = { rate: 307, source: "Tap Tap Send", fetchedAt: "2026-11-07T10:00:00.000Z" };
@@ -79,5 +79,16 @@ describe("exchange rate parsing", () => {
     assert.equal(parseTapTapRate({ availableCountries: [{ isoCountryCode: "NL", currency: "EUR", corridors: [corridor("abc")] }] }), null);
     assert.equal(parseMarketRate({ rates: { PKR: 0 } }), null);
     assert.equal(parseMarketRate({ rates: { PKR: 308.14 } }), 308.14);
+  });
+});
+
+describe("offer slider", () => {
+  it("reaches at least 30% below the asking price", () => {
+    assert.deepEqual(offerRange(30_000), { min: 21_000, max: 30_000, step: 100 });
+    // rounded down, so the slider never stops short of 30%
+    assert.deepEqual(offerRange(23_450), { min: 16_400, max: 23_450, step: 100 });
+  });
+  it("lands at the same total as the cost panel for that price", () => {
+    assert.deepEqual(landedAt(21_000, RATE), { pkr: costPanel(21_000, RATE).pkr, eur: costPanel(21_000, RATE).eur });
   });
 });

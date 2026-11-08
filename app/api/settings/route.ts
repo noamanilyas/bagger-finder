@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { SOURCES } from "@/lib/config";
 import { applyChange, loadSettings, saveSettings } from "@/lib/settings";
+import { loadLastReceived } from "@/lib/external-received";
 
 export const dynamic = "force-dynamic";
 
+/** The settings, and when each external site was last received (shown beside the list, not stored with it). */
 export async function GET() {
   try {
-    return NextResponse.json(await loadSettings());
+    return NextResponse.json({ ...(await loadSettings()), externalLastReceived: await loadLastReceived() });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
