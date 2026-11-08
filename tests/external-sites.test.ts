@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeSite, parseExternalSites, siteDue, siteOfUrl } from "../lib/external-sites";
+import { normalizeSite, parseExternalSites, siteDue, siteOfUrl, staleSites } from "../lib/external-sites";
 import { applyChange, DEFAULT_SETTINGS } from "../lib/settings";
 
 describe("normalizeSite", () => {
@@ -93,5 +93,29 @@ describe("applyChange externalSites", () => {
 
   it("refuses an invalid list", () => {
     assert.equal(typeof applyChange(DEFAULT_SETTINGS, { externalSites: [{ site: "x", intervalMinutes: 5 }] }, []), "string");
+  });
+});
+
+describe("staleSites", () => {
+  const now = Date.parse("2026-11-08T18:00:00.000Z");
+  const minutesAgo = (m: number) => new Date(now - m * 60_000).toISOString();
+  const sites = [
+    { site: "fast.example", intervalMinutes: 5 },
+    { site: "mobile.de", intervalMinutes: 360 },
+    { site: "daily.example", intervalMinutes: 1440 },
+    { site: "new.example", intervalMinutes: 60 },
+  ];
+
+  it("names sites whose own interval has passed since they last arrived, or that never arrived", () => {
+    const last = { "fast.example": minutesAgo(6), "mobile.de": minutesAgo(120), "daily.example": minutesAgo(1500) };
+    assert.deepEqual(
+      staleSites(sites, last, now).map((s) => s.site),
+      ["fast.example", "daily.example", "new.example"],
+    );
+  });
+
+  it("is not late within the interval", () => {
+    assert.deepEqual(staleSites([sites[0]], { "fast.example": minutesAgo(4) }, now), []);
+    assert.deepEqual(staleSites([sites[0]], { "fast.example": minutesAgo(5) }, now), []);
   });
 });

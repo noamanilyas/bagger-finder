@@ -10,6 +10,7 @@
     "scrape": "tsx scraper/run.ts",
     "market-report": "node --env-file=.env --import tsx scraper/market-report.ts",
     "knowledge": "node --env-file=.env --import tsx scraper/knowledge.ts",
+    "rekey-listings": "node --env-file=.env --import tsx scraper/rekey-listings.ts",
     "try-source": "tsx scraper/try-source.ts",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "test:live": "tsx tests/live-parity.ts",

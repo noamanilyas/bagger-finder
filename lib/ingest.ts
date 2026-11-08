@@ -220,22 +220,25 @@ async function ingest(inputs: unknown[], site: string | null): Promise<IngestRes
       continue;
     }
 
+    // The same ad is sometimes sent again with less on it (a search card without price, year or hours):
+    // what is not sent is kept from before, so a later, thinner copy does not blank a machine.
+    const priceSent = m.price != null;
     const listing: Listing = {
       id,
       url,
       source: m.source ?? scraperSource?.name ?? "External",
       title: m.title,
-      description: m.description ?? "",
-      make: m.make,
-      model: m.model,
+      description: m.description || prev?.description || "",
+      make: m.make ?? prev?.make ?? null,
+      model: m.model ?? prev?.model ?? null,
       modelKey: wanted.key,
       modelLabel: wanted.label,
       wheeled: isWheeled(allText, m.title),
-      priceEur,
-      priceAmount: m.currency === "EUR" ? null : m.price,
-      priceCurrency: m.currency === "EUR" ? null : m.currency,
-      year: m.year,
-      hours: m.hours,
+      priceEur: priceSent ? priceEur : (prev?.priceEur ?? null),
+      priceAmount: priceSent ? (m.currency === "EUR" ? null : m.price) : (prev?.priceAmount ?? null),
+      priceCurrency: priceSent ? (m.currency === "EUR" ? null : m.currency) : (prev?.priceCurrency ?? null),
+      year: m.year ?? prev?.year ?? null,
+      hours: m.hours ?? prev?.hours ?? null,
       location,
       lat: coords?.lat ?? null,
       lng: coords?.lng ?? null,

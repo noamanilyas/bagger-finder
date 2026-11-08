@@ -70,6 +70,16 @@ describe("machineGroups", () => {
     assert.deepEqual(sizes(ls), [1, 1, 1]);
   });
 
+  it("joins copies of one ad stored under different ids, even without a price", () => {
+    // mobile.de's JCB JS 145W: once with the search link and all facts, once with the clean link and none
+    const full = ad({ id: "7a5abeb8", url: "https://suchen.mobile.de/fahrzeuge/details.html?id=458732046&ref=srp&refId=b57b&searchId=b57b", source: "mobile.de", priceEur: 19500 });
+    const thin = ad({ id: "0b789187", url: "https://suchen.mobile.de/fahrzeuge/details.html?id=458732046", source: "mobile.de", priceEur: null, year: null, hours: null });
+    const groups = machineGroups([thin, full, ad({ source: "Truck1", priceEur: 19500 })]);
+    assert.equal(groups.length, 1, "the priced copy still joins the same machine on another site");
+    assert.equal(groups[0][0].id, "7a5abeb8", "the copy with the facts is shown");
+    assert.ok(groups[0].some((l) => l.id === "0b789187"));
+  });
+
   it("never groups ads without a price", () => {
     assert.deepEqual(sizes([ad({ priceEur: null }), ad({ priceEur: null })]), [1, 1]);
   });

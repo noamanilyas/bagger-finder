@@ -85,3 +85,14 @@ export function siteDue(name: string, sites: ExternalSite[], lastReceived: Recor
   const due = next == null || now >= next;
   return { site, listed: true, due, intervalMinutes: entry.intervalMinutes, lastReceivedAt, nextDueAt: due || next == null ? null : new Date(next).toISOString() };
 }
+
+/**
+ * Listed sites whose machines (or an empty run, sent with `site`) have not arrived within the site's own interval
+ * (Scraper settings → External sites), or never have: every 5 minutes and nothing for 6 minutes is late.
+ */
+export function staleSites(sites: ExternalSite[], lastReceived: Record<string, string>, now = Date.now()): ExternalSite[] {
+  return sites.filter((s) => {
+    const last = lastReceived[s.site];
+    return !last || now - Date.parse(last) > s.intervalMinutes * 60_000;
+  });
+}

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import AddComment, { isMarked, StarIcon } from "@/components/AddComment";
 import ConfirmScrape from "@/components/ConfirmScrape";
 import ExternalSites from "@/components/ExternalSites";
+import { staleSites } from "@/lib/external-sites";
 import NextScrape from "@/components/NextScrape";
 import PhotoViewer from "@/components/PhotoViewer";
 import SignOut from "@/components/SignOut";
@@ -167,6 +168,9 @@ export default function Home() {
   const [externalReceived, setExternalReceived] = useState<Record<string, string>>({});
   const [pkrRate, setPkrRate] = useState<PkrRate | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Dismissed notice bars; deliberately not persisted, so a page refresh brings them back.
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const dismiss = (key: string) => setDismissed((prev) => new Set(prev).add(key));
   const [view, setView] = useState<View>("split");
   /** the listing whose comment / mark-interesting dialog is open */
   const [commentFor, setCommentFor] = useState<string | null>(null);
@@ -209,6 +213,21 @@ export default function Home() {
       })
       .catch(() => setError("Could not load scraper settings."));
   }, []);
+
+  // When external sites' machines last arrived: refreshed every minute (the shortest interval is 5), for the "not coming in" bar.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => {
+      setClock(Date.now());
+      fetch("/api/settings", { cache: "no-store" })
+        .then(async (res) => {
+          if (res.ok) setExternalReceived(((await res.json()) as { externalLastReceived?: Record<string, string> }).externalLastReceived ?? {});
+        })
+        .catch(() => {}); // the bar keeps the last known times
+    }, 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const lateExternal = settings ? staleSites(settings.externalSites, externalReceived, clock) : [];
 
   useEffect(() => {
     fetch("/api/rate", { cache: "no-store" })
@@ -460,6 +479,11 @@ export default function Home() {
         </div>
       </header>
 
+      {lateExternal.length > 0 && (
+        <div className="notice alert" role="alert">
+          {`Machines are not coming in (nothing received within the interval set in Scraper settings): ${lateExternal.map((s) => s.site).join(", ")}`}
+        </div>
+      )}
       {data && running && (
         <div className="notice" role="status">
           <div>{data.status.message}</div>
@@ -479,14 +503,16 @@ export default function Home() {
           {failed.some(([, s]) => s.blocked) && " · a site that refused is left alone for a day or more, then tried again"}
         </div>
       )}
-      {data && !running && notDue.length > 0 && (
-        <div className="notice">
-          {`Not read in the last automatic scrape (read less often, see Scraper settings): ${notDue.map(([id]) => SOURCES.find((x) => x.id === id)?.name ?? id).join(", ")}`}
+      {data && !running && notDue.length > 0 && !dismissed.has("notDue") && (
+        <div className="notice dismissible">
+          <span>{`Not read in the last automatic scrape (read less often, see Scraper settings): ${notDue.map(([id]) => SOURCES.find((x) => x.id === id)?.name ?? id).join(", ")}`}</span>
+          <button className="notice-close" aria-label="Dismiss" title="Dismiss" onClick={() => dismiss("notDue")}>×</button>
         </div>
       )}
-      {data && !running && resting.length > 0 && (
-        <div className="notice">
-          {`Resting after a block: ${resting.map(([id, s]) => `${id} (until ${until(s.restingUntil!)})`).join("; ")}`}
+      {data && !running && resting.length > 0 && !dismissed.has("resting") && (
+        <div className="notice dismissible">
+          <span>{`Resting after a block: ${resting.map(([id, s]) => `${id} (until ${until(s.restingUntil!)})`).join("; ")}`}</span>
+          <button className="notice-close" aria-label="Dismiss" title="Dismiss" onClick={() => dismiss("resting")}>×</button>
         </div>
       )}
       {error && <div className="notice err">{error}</div>}

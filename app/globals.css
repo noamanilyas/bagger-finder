@@ -29,6 +29,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); 
 .btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
 .btn:disabled { opacity: 0.6; cursor: default; }
 .notice { padding: 8px 16px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); font-size: 13px; border-bottom: 1px solid var(--line); }
+.notice.dismissible { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.notice-close { flex: none; border: 0; background: transparent; color: inherit; font-size: 20px; line-height: 1; padding: 2px 8px; border-radius: 6px; cursor: pointer; opacity: 0.6; }
+.notice-close:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+.notice.alert { background: var(--sel); color: #fff; font-weight: 600; border-bottom-color: var(--sel); }
 .notice.err { background: color-mix(in srgb, var(--sel) 14%, var(--panel)); }
 
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, 460px) 1fr; }

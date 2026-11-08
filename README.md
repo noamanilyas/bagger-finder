@@ -9,6 +9,7 @@ Finds used construction machines across Europe on several marketplaces:
 - **Hitachi:** EX60, EX100, EX120, EX160WD
 - **JCB:** JS140, JS145, only up to €20,000
 - **Samsung:** MX6W, MX132W, 130W, only built 1990 to 2000
+- **Bobcat:** E55, E57W, E60
 - **Caterpillar:** graders 120, 130, 140; wheel loaders 966F, 966G, 970F, 972G, 972H, 980G, 980H (sellers rarely write the "II", so both spellings count)
 
 The list lives in `lib/config.ts`. Results are shown on a map: list with sorting and filters on the left, map on the right.

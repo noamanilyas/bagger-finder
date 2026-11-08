@@ -227,6 +227,11 @@ describe("the owner's model list of 2026-11-07", () => {
     ["Sumsung 130W-3 excavator", "samsung-130"],
     ["JCB JS145 Kettenbagger", "jcb-js145"],
     ["JCB JS-140 Kettenbagger", "jcb-js140"],
+    ["Bobcat E 57 W", "bobcat-e57"],
+    ["Bobcat E57W Mobilbagger", "bobcat-e57"],
+    ["Bobcat E55W Mobilbagger", "bobcat-e55"],
+    ["Bobcat E55 Minibagger", "bobcat-e55"],
+    ["Bobcat E60 Minibagger", "bobcat-e60"],
   ];
 
   it("finds every machine on it, however it is written", () => {
@@ -260,6 +265,8 @@ describe("the owner's model list of 2026-11-07", () => {
       "Dynapac CC 1200 Tandemwalze",
       "Doosan DX225LC-5 Kettenbagger",
       "Doosan DX300LC Kettenbagger",
+      "Bobcat E35 Minibagger",
+      "Bobcat S550 Kompaktlader",
       "Hyundai R170W-9 Mobilbagger",
       "Hyundai 170 W Mobilbagger",
       "Doosan DX 150 W Bagger",
@@ -312,7 +319,7 @@ describe("the owner's model list of 2026-11-07", () => {
     for (const card of ["Doosan DX140LC Kettenbagger", "Hyundai R140LC-9 Kettenbagger", "Doosan DX 170 LC Bagger"]) {
       assert.equal(fits(card), false, card);
     }
-    for (const card of ["Doosan DX 170 W", "Volvo EW170", "Samsung MX132W", "Hitachi EX160WD", "Solar 140W-V", "Doosan 140-WV"]) {
+    for (const card of ["Bobcat E 57 W", "Bobcat E55W Mobilbagger", "Doosan DX 170 W", "Volvo EW170", "Samsung MX132W", "Hitachi EX160WD", "Solar 140W-V", "Doosan 140-WV"]) {
       assert.ok(fits(card), card);
     }
   });

@@ -1,4 +1,5 @@
 import { countryOf } from "./countries";
+import { normalizeUrl } from "./ad-url";
 import type { Listing } from "./types";
 
 /**
@@ -45,8 +46,32 @@ const filled = (l: Listing) =>
 
 const better = (a: Listing, b: Listing) => filled(b) - filled(a) || b.lastSeen.localeCompare(a.lastSeen) || a.id.localeCompare(b.id);
 
-/** The ads grouped into machines, the fullest ad first in each group. Ads without a price are never grouped. */
+/**
+ * The ads grouped into machines, the fullest ad first in each group. Ads with the same address are the same ad,
+ * stored twice under ids made before addresses were cleaned (see lib/listing-id.ts): they are always one machine,
+ * even when one of them lacks the price. Otherwise ads without a price are never grouped.
+ */
 export function machineGroups(listings: Listing[]): Listing[][] {
+  const sameAd = new Map<string, Listing[]>();
+  for (const l of listings) {
+    const url = normalizeUrl(l.url);
+    (sameAd.get(url) ?? sameAd.set(url, []).get(url)!).push(l);
+  }
+  // The fullest copy of each ad is grouped with other ads; its other copies follow it into that group.
+  const followers = new Map<string, Listing[]>();
+  const leaders: Listing[] = [];
+  for (const copies of sameAd.values()) {
+    const [lead, ...rest] = [...copies].sort(better);
+    leaders.push(lead);
+    if (rest.length > 0) followers.set(lead.id, rest);
+  }
+  return groupAds(leaders).map((g) => {
+    const all = g.flatMap((l) => [l, ...(followers.get(l.id) ?? [])]);
+    return [all[0], ...all.slice(1).sort(better)];
+  });
+}
+
+function groupAds(listings: Listing[]): Listing[][] {
   const buckets = new Map<string, Listing[]>();
   const groups: Listing[][] = [];
   for (const l of listings) {
@@ -82,9 +107,11 @@ export function oneCardPerMachine(listings: Listing[]): Listing[] {
   return machineGroups(listings).map(([main, ...rest]) => {
     if (rest.length === 0) return main;
     const notes = new Map([main, ...rest].flatMap((l) => l.knowledge ?? []).map((k) => [k.id, k]));
+    // Another stored copy of the very same ad is not another place to look.
+    const others = rest.filter((l) => normalizeUrl(l.url) !== normalizeUrl(main.url));
     return {
       ...main,
-      alsoOn: rest.map((l) => ({ id: l.id, source: l.source, url: l.url })),
+      ...(others.length > 0 ? { alsoOn: others.map((l) => ({ id: l.id, source: l.source, url: l.url })) } : {}),
       ...(notes.size > 0 ? { knowledge: [...notes.values()] } : {}),
     };
   });

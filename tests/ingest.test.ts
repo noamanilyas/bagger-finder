@@ -92,6 +92,14 @@ describe("ingestMachines", () => {
     assert.equal(listings[0].firstSeen, firstSeen);
   });
 
+  it("keeps the price, year and hours when the same ad is sent again without them", async () => {
+    await ingest.ingestMachines([{ ...machine, price: null, year: null, hours: null }]);
+    const [l] = store.readDb().listings;
+    assert.equal(l.priceEur, 37000);
+    assert.equal(l.year, 2012);
+    assert.equal(l.hours, 8400);
+  });
+
   it("marks no site as extracted while none is listed", async () => {
     const result = await ingest.ingestMachines([], "mobile.de");
     assert.deepEqual(result.extracted, []);

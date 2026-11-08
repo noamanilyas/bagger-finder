@@ -34,6 +34,9 @@ const CAT = /caterpillar|(?<![a-z])cat(?![a-z])/i;
 const HITACHI = /hitachi/i;
 const JCB = /jcb/i;
 const SAMSUNG = /samsung|sumsung/i;
+const BOBCAT = /bobcat/i;
+/** Bobcat's E range: "E57W", "E 55 W", "E-60". */
+const bobcatE = (n: number) => new RegExp(String.raw`(?<![a-z])e\s*-?\s*${n}(?!\d|[,.]\d)`, "i");
 
 /** "Doosan 140-WV" and "Daewoo 225 LC" name the size without DX or Solar. Only with W or LC behind it: "Doosan 140 PS" is no model. */
 const makeAndSize = (n: number) => String.raw`(?:do{1,2}san|develon|daewoo)\s*-?\s*${n}\s*-?\s*(?:w|n?lc)`;
@@ -88,6 +91,11 @@ export const WANTED: WantedModel[] = [
   // the owner also wants these wheeled sizes
   { key: "doosan-dx160", label: "Doosan DX160", make: DOOSAN, number: dx(160) },
   { key: "doosan-dx190", label: "Doosan DX190", make: DOOSAN, number: dx(190) },
+
+  // The owner, 2026-11-08: Bobcat's machines of the Yanmar 55 class. The E57W is wheeled, the E55 comes as both, the E60 on tracks.
+  { key: "bobcat-e55", label: "Bobcat E55", make: BOBCAT, number: bobcatE(55) },
+  { key: "bobcat-e57", label: "Bobcat E57W", make: BOBCAT, number: bobcatE(57) },
+  { key: "bobcat-e60", label: "Bobcat E60", make: BOBCAT, number: bobcatE(60) },
 
   // The owner's model list of 2026-11-07. Each size has its own key, because prices are compared per key.
   { key: "doosan-dx57", label: "Doosan DX57", make: DOOSAN, number: dx(57) },
@@ -177,7 +185,7 @@ export function matchModel(text: string, languages: LangCode[] = DEFAULT_LANGUAG
 
 /** The "W" that marks a wheeled model (DX55W, R140W-9, Robex 55W), or Hyundai's HW range. Nothing to translate here. */
 const WHEELED_MODEL =
-  /(?:dx|robex|hx|r|b|sv|(?<![a-z])(?:solar|s|dh|se|do{1,2}san|daewoo|develon|samsung))\s*-?\s*\d{2,3}\s*-?\s*w[vr]?(?![a-z])|(?<![a-z])mx\s*-?\s*\d{1,3}\s*-?\s*w(?![a-z])|(?<![a-z])ex\s*-?\s*\d{2,3}\s*-?\s*wd?(?![a-z])|(?<![a-z])hw\s*-?\s*\d{2,3}(?!\d)|(?<![a-z])ewr?\s*-?\s*\d{2,3}(?!\d)/i;
+  /(?:dx|robex|hx|r|b|sv|(?<![a-z])(?:solar|s|dh|se|do{1,2}san|daewoo|develon|samsung))\s*-?\s*\d{2,3}\s*-?\s*w[vr]?(?![a-z])|(?<![a-z])mx\s*-?\s*\d{1,3}\s*-?\s*w(?![a-z])|(?<![a-z])ex\s*-?\s*\d{2,3}\s*-?\s*wd?(?![a-z])|(?<![a-z])hw\s*-?\s*\d{2,3}(?!\d)|(?<![a-z])ewr?\s*-?\s*\d{2,3}(?!\d)|(?<![a-z])e\s*-?\s*\d{2}\s*-?\s*w(?![a-z])/i;
 
 /** LC and NLC mark crawlers: R140LC-9, DX140LCR. */
 const TRACKED_MODEL = /(?:dx|robex|hx|r|(?<![a-z])(?:solar|s))\s*-?\s*\d{2,3}\s*-?\s*n?lc/i;
@@ -200,7 +208,7 @@ export function fitsMobileOnly(model: WantedModel, text: string, title?: string 
 
 /** Cheap pre-filter so we only send plausible blocks to the AI. */
 export function looksRelevant(text: string): boolean {
-  return /yanmar|do{1,2}san|develon|daewoo|hyundai|solar|hitachi|volvo|caterpillar|jcb|samsung|sumsung/i.test(text) || CAT.test(text) || /\bdx\s*-?\s*\d{2,3}/i.test(text);
+  return /yanmar|do{1,2}san|develon|daewoo|hyundai|solar|hitachi|volvo|caterpillar|jcb|samsung|sumsung|bobcat/i.test(text) || CAT.test(text) || /\bdx\s*-?\s*\d{2,3}/i.test(text);
 }
 
 /** null means no limit. */
@@ -340,6 +348,9 @@ export const NATIONAL_QUERIES = [
   "yanmar",
   "hitachi",
   "samsung",
+  "bobcat e55",
+  "bobcat e57",
+  "bobcat e60",
   "volvo ew170",
   "jcb js140",
   "jcb js145",
@@ -375,9 +386,9 @@ const withMachineWord = (word: string) =>
 /** Landwirt.com: one page per category and make, as the site's own make filter. */
 function landwirtSearches(mobileOnly: boolean): PagedSearch[] {
   const pairs: [string, string[]][] = [
-    ["mobilbagger", ["doosan", "develon", "daewoo", "hyundai", "yanmar", "hitachi", "volvo", "samsung", "jcb"]],
+    ["mobilbagger", ["doosan", "develon", "daewoo", "hyundai", "yanmar", "hitachi", "volvo", "samsung", "jcb", "bobcat"]],
     ["kettenbagger", ["doosan", "develon", "daewoo", "hitachi", "jcb", ...(mobileOnly ? [] : ["hyundai"])]],
-    ["minibagger", ["hitachi", ...(mobileOnly ? [] : ["doosan", "hyundai", "yanmar"])]],
+    ["minibagger", ["hitachi", ...(mobileOnly ? [] : ["doosan", "hyundai", "yanmar", "bobcat"])]],
     ["radlader", ["cat"]],
     ["grader", ["cat"]],
   ];
@@ -415,7 +426,7 @@ const olxGroupListing = (host: string, section: string) => (url: string) =>
  * Develon page). Their order changes per request, so one scrape may miss a machine that the next one finds.
  * These pages also hold lathes and forklifts: classify() turns those down. Its /main/ search is closed by robots.txt.
  */
-const MASCHINENSUCHER_PAGES = { doosan: 8, hyundai: 6, yanmar: 2, volvo: 8, caterpillar: 8, jcb: 8, hitachi: 4, daewoo: 3, samsung: 1 };
+const MASCHINENSUCHER_PAGES = { doosan: 8, hyundai: 6, yanmar: 2, volvo: 8, caterpillar: 8, jcb: 8, hitachi: 4, daewoo: 3, samsung: 1, bobcat: 3 };
 
 /** TruckScout24 filters a make page by its own model names. A name the site does not know does no harm. */
 const ts24Models = (make: string, models: string[], pages: number) =>
@@ -492,6 +503,15 @@ const TEXT_QUERIES = [
   "samsung mx132w",
   "samsung mx 6 w",
   "samsung mx6w",
+  "bobcat e 57 w",
+  "bobcat e57w",
+  "bobcat e 55 w",
+  "bobcat e55w",
+  "mobilbagger bobcat",
+  "bobcat e 55",
+  "bobcat e55",
+  "bobcat e 60",
+  "bobcat e60",
 ];
 
 /** The rest of that list: not only wheeled, so these run whatever the "only scrape Mobilbagger" setting says. */
@@ -557,6 +577,7 @@ export const SOURCES: Source[] = [
       ...range(6).map((n) => `${TS24}/mobilbagger/doosan?page=${n}`),
       ...range(4).map((n) => `${TS24}/mobilbagger/hyundai?page=${n}`),
       ...range(3).map((n) => `${TS24}/mobilbagger/yanmar?page=${n}`),
+      `${TS24}/mobilbagger/bobcat`,
       // The other makes: the site shows a whole make whichever category is asked for (see TODO.md), so read the make once.
       ...range(5).map((n) => `${TS24}/alle/hitachi${n > 1 ? `?page=${n}` : ""}`),
       `${TS24}/alle/daewoo`,
@@ -569,6 +590,7 @@ export const SOURCES: Source[] = [
         ? []
         : [
             ...range(2).map((n) => `${TS24}/minibagger/yanmar?page=${n}`),
+            ...range(3).map((n) => `${TS24}/minibagger/bobcat?page=${n}`),
             ...range(4).map((n) => `${TS24}/minibagger/doosan?page=${n}`),
             ...range(4).map((n) => `${TS24}/kettenbagger/doosan?page=${n}`),
             ...range(3).map((n) => `${TS24}/minibagger/hyundai?page=${n}`),
@@ -621,6 +643,7 @@ export const SOURCES: Source[] = [
         "mobilbagger/doosan": 6,
         "mobilbagger/develon": 2,
         "mobilbagger/yanmar": 3,
+        "mobilbagger/bobcat": 1,
         "mobilbagger/hitachi": 6,
         "mobilbagger/volvo": 9,
         "mobilbagger/daewoo": 1,
@@ -665,6 +688,7 @@ export const SOURCES: Source[] = [
         "doosan-wheel-excavator/~a2b1c3e803/used.html": 4,
         "develon-wheel-excavator/~a2b1c3e7872/used.html": 1,
         "yanmar-wheel-excavator/~a2b1c3e788/used.html": 2,
+        "bobcat-wheel-excavator/~a2b1c3e92/used.html": 1,
         "hitachi-wheel-excavator/~a2b1c3e338/used.html": 4,
         "volvo-wheel-excavator/~a2b1c3e774/used.html": 4,
         "doosan-crawler-excavator/~a2b1c2e803/used.html": 9,
@@ -673,7 +697,8 @@ export const SOURCES: Source[] = [
         "jcb-crawler-excavator/~a2b1c2e384/used.html": 4,
         "caterpillar-wheel-loader/~a2b3c12e133/used.html": 24,
         "caterpillar-grader/2-6-133/used-caterpillar-grader.html": 9,
-        ...(mobileOnly ? {} : { "hyundai-crawler-excavator/~a2b1c2e355/used.html": 4 }),
+        // 236 Bobcat mini excavators on 2026-11-08, mostly smaller than the E55
+        ...(mobileOnly ? {} : { "hyundai-crawler-excavator/~a2b1c2e355/used.html": 4, "bobcat-mini-excavator/~a2b1c4e92/used.html": 12 }),
       }).flatMap(([path, pages]) =>
         range(pages).map((n) => `https://www.europe-construction-equipment.com/${path}${n > 1 ? `?p=${n}` : ""}`),
       ),
@@ -698,6 +723,7 @@ export const SOURCES: Source[] = [
         "wheel-excavators/doosan": 4,
         "wheel-excavators/develon": 1,
         "wheel-excavators/yanmar": 1,
+        "wheel-excavators/bobcat": 1,
         "wheel-excavators/hitachi": 2,
         "wheel-excavators/volvo": 4,
         "crawler-excavators/doosan": 6,
