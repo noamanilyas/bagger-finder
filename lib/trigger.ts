@@ -21,6 +21,10 @@ export async function triggerScrape(
   limits?: Limits,
   trigger: "auto" | "manual" = "manual",
 ): Promise<{ started: boolean; reason?: string }> {
+  // TEMPORARY: local and Render share one database, so scrape only from the local server for now.
+  // Render sets RENDER=true on its services. Remove this to let Render scrape again.
+  if (process.env.RENDER) return { started: false, reason: "Scraping is temporarily disabled on Render; it runs locally." };
+
   const s = readStatus();
   if (isRunning()) return { started: false, reason: "A scrape is already running." };
   if (s.startedAt && Date.now() - Date.parse(s.startedAt) < MIN_GAP_MS) {
