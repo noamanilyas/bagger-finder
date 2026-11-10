@@ -17,6 +17,8 @@ type Props = {
   onMark?: (id: string) => void;
   /** opens the machine's photo in the big view */
   onPhoto?: (id: string) => void;
+  /** changes when the person changes what is shown (filters, search); the map then fits all pins again */
+  fitKey?: string;
 };
 
 const fmtPrice = (p: number | null) => (p == null ? "?" : p >= 1000 ? `${Math.round(p / 1000)}k` : String(p));
@@ -30,6 +32,9 @@ function jitter(id: string, base: number): number {
 
 /** Same rule as the list's deal tag: below market or matching the buyer's notes, unless AI found it not comparable. */
 const isDealPin = (l: Listing) => (l.flagged || !!l.knowledge?.length) && l.aiVerdict !== "not_comparable";
+
+/** What the pin looks like: a pin is only redrawn when this changes, so a data refresh does not disturb an open popup. */
+const iconKey = (l: Listing, selected: boolean) => `${selected ? "s" : isDealPin(l) ? "d" : "n"}${l.priceEur}`;
 
 function iconFor(l: Listing, selected: boolean) {
   return L.divIcon({
@@ -168,11 +173,11 @@ function popupFor(l: Listing, rate: PkrRate | null, onMark?: (id: string) => voi
   return root;
 }
 
-export default function Map({ listings, selectedId, onSelect, pkrRate, onMark, onPhoto }: Props) {
+export default function Map({ listings, selectedId, onSelect, pkrRate, onMark, onPhoto, fitKey }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
-  const markers = useRef(new globalThis.Map<string, { marker: L.Marker; listing: Listing }>());
+  const markers = useRef(new globalThis.Map<string, { marker: L.Marker; listing: Listing; key: string }>());
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const onMarkRef = useRef(onMark);
@@ -182,6 +187,12 @@ export default function Map({ listings, selectedId, onSelect, pkrRate, onMark, o
   // read when a popup opens, so a rate arriving later does not rebuild the markers and move the map
   const pkrRateRef = useRef(pkrRate);
   pkrRateRef.current = pkrRate;
+  const selectedRef = useRef(selectedId);
+  selectedRef.current = selectedId;
+  // Fitting all pins is for the first load and for filter changes. A data refresh (every few seconds while a scrape runs)
+  // must not undo the zoom the person chose or the machine they are looking at.
+  const fitted = useRef<{ key: string | undefined } | null>(null);
+  const userMoved = useRef(false);
 
   // create the map once
   useEffect(() => {
@@ -193,36 +204,76 @@ export default function Map({ listings, selectedId, onSelect, pkrRate, onMark, o
     }).addTo(m);
     layer.current = L.layerGroup().addTo(m);
     map.current = m;
+    const moved = () => {
+      userMoved.current = true;
+    };
+    const box = m.getContainer();
+    for (const type of ["pointerdown", "wheel", "keydown"]) box.addEventListener(type, moved, { passive: true });
     return () => {
+      for (const type of ["pointerdown", "wheel", "keydown"]) box.removeEventListener(type, moved);
       m.remove();
       map.current = null;
+      layer.current = null;
+      markers.current.clear(); // their layers went with the map
+      fitted.current = null;
     };
   }, []);
 
-  // (re)build markers when the visible listings change
+  // Keep the pins in step with the visible listings: add new ones, drop gone ones, redraw only changed ones.
+  // Recreating them all would close the open popup and lose the highlight on every data refresh.
   useEffect(() => {
     const m = map.current;
     const group = layer.current;
     if (!m || !group) return;
-    group.clearLayers();
-    markers.current.clear();
     const pts: L.LatLngTuple[] = [];
+    const keep = new Set<string>();
     for (const l of listings) {
       if (l.lat == null || l.lng == null) continue;
+      keep.add(l.id);
       const pos: L.LatLngTuple = [jitter(l.id, l.lat), jitter(l.id + "x", l.lng)];
-      const marker = L.marker(pos, { icon: iconFor(l, false) })
-        .bindPopup(() => popupFor(l, pkrRateRef.current, onMarkRef.current && ((id) => onMarkRef.current?.(id)), (id) => onPhotoRef.current?.(id)), { minWidth: 320, maxWidth: 360 })
-        .on("click", () => onSelectRef.current(l.id));
-      marker.addTo(group);
-      markers.current.set(l.id, { marker, listing: l });
       pts.push(pos);
+      const key = iconKey(l, l.id === selectedRef.current);
+      const have = markers.current.get(l.id);
+      if (have) {
+        have.listing = l; // the popup is built from this when it opens
+        if (have.key !== key) {
+          have.marker.setIcon(iconFor(l, l.id === selectedRef.current));
+          have.key = key;
+        }
+        continue;
+      }
+      const entry = { marker: null as unknown as L.Marker, listing: l, key };
+      entry.marker = L.marker(pos, { icon: iconFor(l, l.id === selectedRef.current) })
+        .bindPopup(() => popupFor(entry.listing, pkrRateRef.current, onMarkRef.current && ((id) => onMarkRef.current?.(id)), (id) => onPhotoRef.current?.(id)), { minWidth: 320, maxWidth: 360 })
+        .on("click", () => onSelectRef.current(l.id));
+      entry.marker.addTo(group);
+      markers.current.set(l.id, entry);
     }
-    if (pts.length) m.fitBounds(L.latLngBounds(pts).pad(0.15), { maxZoom: 9 });
-  }, [listings]);
+    markers.current.forEach(({ marker }, id) => {
+      if (keep.has(id)) return;
+      group.removeLayer(marker);
+      markers.current.delete(id);
+    });
+
+    if (!pts.length) return;
+    const first = fitted.current === null;
+    const filtersChanged = !first && fitted.current!.key !== fitKey;
+    const leaveAlone = !!selectedRef.current || userMoved.current;
+    if (first || filtersChanged || !leaveAlone) {
+      m.fitBounds(L.latLngBounds(pts).pad(0.15), { maxZoom: 9 });
+      userMoved.current = false;
+    }
+    fitted.current = { key: fitKey };
+  }, [listings, fitKey]);
 
   // highlight + fly to the selected listing
   useEffect(() => {
-    markers.current.forEach(({ marker, listing }, id) => marker.setIcon(iconFor(listing, id === selectedId)));
+    markers.current.forEach((entry, id) => {
+      const key = iconKey(entry.listing, id === selectedId);
+      if (key === entry.key) return;
+      entry.marker.setIcon(iconFor(entry.listing, id === selectedId));
+      entry.key = key;
+    });
     const hit = selectedId ? markers.current.get(selectedId) : null;
     if (hit && map.current) {
       const m = map.current;

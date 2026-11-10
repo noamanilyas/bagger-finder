@@ -298,6 +298,9 @@ export default function Home() {
       .sort(sorter(sort));
   }, [data, models, source, maxPrice, maxYear, modelText, query, sort, wheeledOnly, dealsOnly, pricedOnly]);
 
+  // what the person asked to see: when this changes the map fits all pins again; a data refresh does not
+  const fitKey = [[...models].sort().join(","), source, maxPrice, maxYear, modelText, query, wheeledOnly, dealsOnly, pricedOnly].join("|");
+
   const select = useCallback((id: string) => {
     setSelected(id);
     document.getElementById(`item-${id}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -710,7 +713,7 @@ export default function Home() {
 
         {view !== "list" && (
           <main className="right">
-            <Map listings={visible} selectedId={selected} onSelect={select} pkrRate={pkrRate} onMark={setCommentFor} onPhoto={setPhotoFor} />
+            <Map listings={visible} fitKey={fitKey} selectedId={selected} onSelect={select} pkrRate={pkrRate} onMark={setCommentFor} onPhoto={setPhotoFor} />
           </main>
         )}
       </div>
