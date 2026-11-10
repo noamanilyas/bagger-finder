@@ -1,19 +1,27 @@
 {
   "manifest_version": 3,
-  "name": "Open mobile.de Search",
-  "version": "4.1.0",
-  "host_permissions": ["http://localhost:3000/*"],
-  "description": "Opens the mobile.de construction machine search in a new tab.",
+  "name": "Listing Collector",
+  "version": "5.1.0",
+  "description": "Collects listings from configured search pages and sends them to the local API.",
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background/index.js",
+    "type": "module"
   },
   "action": {
-    "default_title": "Open mobile.de search"
+    "default_title": "Open the first search page"
   },
+  "permissions": ["alarms"],
+  "host_permissions": ["http://localhost:3000/*"],
   "content_scripts": [
     {
       "matches": ["https://suchen.mobile.de/fahrzeuge/search.html*"],
-      "js": ["content.js"],
+      "js": [
+        "content/core/util.js",
+        "content/core/state.js",
+        "content/core/messages.js",
+        "content/core/collector.js",
+        "content/sites/mobile-de.js"
+      ],
       "run_at": "document_end"
     }
   ]
