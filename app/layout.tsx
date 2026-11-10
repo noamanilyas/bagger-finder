@@ -5,6 +5,7 @@ import "./redesign.css";
 export const metadata: Metadata = {
   title: "Bagger Finder",
   description: "Used excavators, wheel loaders, graders and rollers across Europe on one map",
+  icons: { icon: { url: "/favicon", type: "image/svg+xml" } },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
