@@ -16,6 +16,9 @@ RUN npm install --no-audit --no-fund
 RUN npx playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
 
 COPY . .
+# Next.js writes NEXT_PUBLIC_* values into the build, so the sign-in address must be there at build time (Render passes
+# its environment variables as build arguments). Without it, sign-in sends people back to the server's own localhost.
+ARG NEXT_PUBLIC_WORKOS_REDIRECT_URI
 RUN npm run build
 
 ENV NODE_ENV=production
