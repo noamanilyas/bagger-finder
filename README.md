@@ -16,7 +16,7 @@ The list lives in `lib/config.ts`. Results are shown on a map: list with sorting
 
 **Where it looks:** the portals Mascus, Machineryline, Truck1, Europe-Construction-Equipment, TruckScout24 and
 Maschinensucher, plus Kleinanzeigen, and national sites across Europe: Landwirt.com (AT), Marktplaats (NL), 2dehands and
-2ememain (BE), Bazoš (CZ, SK), Otomoto (PL), Autovit (RO), Jófogás and Agroinform (HU), FINN (NO), DBA and Maskinbladet
+2ememain (BE), Bazoš (CZ, SK), Otomoto and OLX.pl (PL), Autovit (RO), Jófogás and Agroinform (HU), FINN (NO), DBA and Maskinbladet
 (DK), Blocket (SE), Nettikone (FI), Subito (IT), Leboncoin (FR) and Autotrader Plant (UK). mobile.de joins through its
 official Search-API once mobile.de grants an API-Account (see below). Prices in other currencies are shown in euros at the
 day's rate, with the site's own price next to them.

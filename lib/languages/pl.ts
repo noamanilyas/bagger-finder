@@ -11,7 +11,7 @@ export const pl: Language = {
   roller: ["walec", "walce", "walca"],
   // Not plain "wynajem": dealers advertise "sprzedaż i wynajem" on machines they are selling.
   notForSale: ["na wynajem", "do wynajęcia", "wynajmę", "wynajem kopark*", "wypożyczę", "kupię", "poszukuję", "szukam", "wózek widłowy"],
-  partAtStart: ["części", "część", "opon*", "koła", "koło", "gąsienic*", "łyżk*", "silnik*", "pomp*", "szybkozłącz*", "siłownik*", "lemiesz*"],
+  partAtStart: ["części", "część", "opon*", "koła", "koło", "gąsienic*", "łyżk*", "silnik*", "pomp*", "szybkozłącz*", "siłownik*", "lemiesz*", "krzyżak*", "wał*", "filtr*", "uszczelk*", "przekładni*", "skrzyni*", "zębatk*", "sworzn*", "sworzeń", "tulej*", "łożysk*", "chłodnic*", "rozrusznik*", "alternator*", "zawór", "zawory", "fotel*", "drzwi"],
   labels: { year: ["rok produkcji", "rocznik"], hours: ["motogodzin*", "mtg", "mth", "godzin*"] },
   searchWords: ["koparka kołowa"],
   acceptCookies: ["Akceptuję", "Zaakceptuj wszystko", "Akceptuj wszystkie", "Zgadzam się"],

@@ -251,6 +251,32 @@ export const parseOtomoto = olxGroup("PLN");
 export const parseAutovit = olxGroup("RON");
 
 /**
+ * OLX.pl: "Koparka Doosan FX57W. /Tosamo co bobkar E57 w 99 200 zł Miejska Górka - Odświeżono dnia 15 listopada 2026 2019",
+ * with "do negocjacji" behind the price, and the date as "11 listopada 2026" or "Dzisiaj o 12:30". The last number is the
+ * year of production, which an ad can leave out.
+ */
+export function parseOlxPl(text: string): SiteCard | null {
+  const m = text.match(
+    /^(.+?)\s+(?:(\d{1,3}(?:\s\d{3})*)\s*zł|Zamienię|Za darmo)(?:\s+do negocjacji)?\s+(.+?)\s+-\s+(?:(?:Odświeżono\s+(?:dnia|dzisiaj o)|Dzisiaj o)\s+)?(?:\d{1,2}\s+\p{L}+\s+\d{4}|\d{1,2}:\d{2})(?:\s+((?:19|20)\d{2})(?=\s|$))?/iu,
+  );
+  if (!m) return null;
+  const title = tidy(m[1]);
+  const amount = toNumber(m[2]);
+  // "9tys mth" is 9,000 hours.
+  const hours = title.match(/(?<![\d.,])(\d{1,3}(?:[. ]\d{3})+|\d{1,3})\s*(tys\.?)?\s*(?:mth|mtg|mh|motogodzin\p{L}*)(?![\p{L}])/iu);
+  return {
+    title: title.slice(0, 140),
+    location: tidy(m[3]),
+    priceEur: null,
+    priceAmount: amount,
+    priceCurrency: amount != null ? "PLN" : null,
+    year: toNumber(m[4]),
+    hours: hours ? (toNumber(hours[1]) ?? 0) * (hours[2] ? 1000 : 1) || null : null,
+    priceNote: /\bnetto\b/i.test(title) ? "excl. VAT" : null,
+  };
+}
+
+/**
  * Jófogás Auto: "Doosan DW85 1500 üó 8 17,90 M Ft 2022 • 0 km Lisztes Trans Kereskedés Berettyóújfalu 8 Doosan DW85 1500 üó
  * 17 900 000 Ft 2022 • 0 km Lisztes Trans Kereskedés Berettyóújfalu"
  */
@@ -475,6 +501,7 @@ export const CARD_PARSERS: Record<string, (text: string) => SiteCard | null> = {
   "bazos-sk": parseBazosSk,
   otomoto: parseOtomoto,
   autovit: parseAutovit,
+  "olx-pl": parseOlxPl,
   jofogas: parseJofogas,
   agroinform: parseAgroinform,
   finn: parseFinn,

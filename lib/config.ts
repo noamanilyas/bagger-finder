@@ -34,13 +34,14 @@ const CAT = /caterpillar|(?<![a-z])cat(?![a-z])/i;
 const HITACHI = /hitachi/i;
 const JCB = /jcb/i;
 const SAMSUNG = /samsung|sumsung/i;
-const BOBCAT = /bobcat/i;
+/** "bobkar" is how Polish sellers write it. */
+const BOBCAT = /bobcat|bobkar/i;
 /** Bobcat's E range: "E57W", "E 55 W", "E-60". */
 const bobcatE = (n: number) => new RegExp(String.raw`(?<![a-z])e\s*-?\s*${n}(?!\d|[,.]\d)`, "i");
 
 /** "Doosan 140-WV" and "Daewoo 225 LC" name the size without DX or Solar. Only with W or LC behind it: "Doosan 140 PS" is no model. */
 const makeAndSize = (n: number) => String.raw`(?:do{1,2}san|develon|daewoo)\s*-?\s*${n}\s*-?\s*(?:w|n?lc)`;
-const dx = (n: number) => new RegExp(String.raw`dx\s*-?\s*${n}(?!\d)|${makeAndSize(n)}`, "i");
+const dx = (n: number, prefix = "dx") => new RegExp(String.raw`${prefix}\s*-?\s*${n}(?!\d)|${makeAndSize(n)}`, "i");
 /** Solar is the old name of the Doosan and Daewoo range, also written S130W. */
 const solar = (n: number) => new RegExp(String.raw`(?:solar|(?<![a-z])s)\s*-?\s*${n}(?!\d)|${makeAndSize(n)}`, "i");
 /** "EX 60", "EX100-3", but not the end of "Flex 60". */
@@ -98,7 +99,8 @@ export const WANTED: WantedModel[] = [
   { key: "bobcat-e60", label: "Bobcat E60", make: BOBCAT, number: bobcatE(60) },
 
   // The owner's model list of 2026-11-07. Each size has its own key, because prices are compared per key.
-  { key: "doosan-dx57", label: "Doosan DX57", make: DOOSAN, number: dx(57) },
+  // Sold as FX57W in Poland: the same machine as the Bobcat E57W.
+  { key: "doosan-dx57", label: "Doosan DX57", make: DOOSAN, number: dx(57, "[df]x") },
   { key: "doosan-dx170", label: "Doosan DX170", make: DOOSAN, number: dx(170) },
   { key: "doosan-dh130", label: "Doosan DH130", make: DOOSAN, number: /dh\s*-?\s*130(?!\d)/i },
   { key: "solar-55", label: "Solar 55", make: SOLAR, number: solar(55) },
@@ -185,7 +187,7 @@ export function matchModel(text: string, languages: LangCode[] = DEFAULT_LANGUAG
 
 /** The "W" that marks a wheeled model (DX55W, R140W-9, Robex 55W), or Hyundai's HW range. Nothing to translate here. */
 const WHEELED_MODEL =
-  /(?:dx|robex|hx|r|b|sv|(?<![a-z])(?:solar|s|dh|se|do{1,2}san|daewoo|develon|samsung))\s*-?\s*\d{2,3}\s*-?\s*w[vr]?(?![a-z])|(?<![a-z])mx\s*-?\s*\d{1,3}\s*-?\s*w(?![a-z])|(?<![a-z])ex\s*-?\s*\d{2,3}\s*-?\s*wd?(?![a-z])|(?<![a-z])hw\s*-?\s*\d{2,3}(?!\d)|(?<![a-z])ewr?\s*-?\s*\d{2,3}(?!\d)|(?<![a-z])e\s*-?\s*\d{2}\s*-?\s*w(?![a-z])/i;
+  /(?:[df]x|robex|hx|r|b|sv|(?<![a-z])(?:solar|s|dh|se|do{1,2}san|daewoo|develon|samsung))\s*-?\s*\d{2,3}\s*-?\s*w[vr]?(?![a-z])|(?<![a-z])mx\s*-?\s*\d{1,3}\s*-?\s*w(?![a-z])|(?<![a-z])ex\s*-?\s*\d{2,3}\s*-?\s*wd?(?![a-z])|(?<![a-z])hw\s*-?\s*\d{2,3}(?!\d)|(?<![a-z])ewr?\s*-?\s*\d{2,3}(?!\d)|(?<![a-z])e\s*-?\s*\d{2}\s*-?\s*w(?![a-z])/i;
 
 /** LC and NLC mark crawlers: R140LC-9, DX140LCR. */
 const TRACKED_MODEL = /(?:dx|robex|hx|r|(?<![a-z])(?:solar|s))\s*-?\s*\d{2,3}\s*-?\s*n?lc/i;
@@ -208,14 +210,14 @@ export function fitsMobileOnly(model: WantedModel, text: string, title?: string 
 
 /** Cheap pre-filter so we only send plausible blocks to the AI. */
 export function looksRelevant(text: string): boolean {
-  return /yanmar|do{1,2}san|develon|daewoo|hyundai|solar|hitachi|volvo|caterpillar|jcb|samsung|sumsung|bobcat/i.test(text) || CAT.test(text) || /\bdx\s*-?\s*\d{2,3}/i.test(text);
+  return /yanmar|do{1,2}san|develon|daewoo|hyundai|solar|hitachi|volvo|caterpillar|jcb|samsung|sumsung|bobcat|bobkar/i.test(text) || CAT.test(text) || /\bdx\s*-?\s*\d{2,3}/i.test(text);
 }
 
 /** null means no limit. */
 export type Limits = { maxPrice: number | null; maxYear: number | null };
 
 /** What the scraper keeps by default, and what the app's filters start at. */
-export const DEFAULT_LIMITS: Limits = { maxPrice: 45_000, maxYear: 2015 };
+export const DEFAULT_LIMITS: Limits = { maxPrice: 45_000, maxYear: 2020 };
 
 /** Limits sent by the app: a positive whole number or null (no limit); anything else falls back to the default. */
 export function parseLimits(input: unknown): Limits {
@@ -815,6 +817,25 @@ export const SOURCES: Source[] = [
     ...NATIONAL,
     isListing: olxGroupListing("www.otomoto.pl", "maszyny-budowlane"),
     paged: () => searchesFor((q, n) => `https://www.otomoto.pl/maszyny-budowlane/q-${dashQuery(q)}${n > 1 ? `?page=${n}` : ""}`),
+  },
+  {
+    // Polish sellers write "FX57W" and "bobkar", so those get searches of their own. Ads of OLX's vehicle sites show up in
+    // these results too, as links to otomoto.pl: Otomoto's own searches read those.
+    id: "olx-pl",
+    name: "OLX.pl",
+    enabled: true,
+    languages: ["pl"],
+    defaultCountry: "Polska",
+    currency: "PLN",
+    ...NATIONAL,
+    isListing: (url) => /^https:\/\/www\.olx\.pl\/d\/oferta\/[^?#]+\.html/.test(url),
+    stripQuery: true,
+    paged: () =>
+      searchesFor(
+        (q, n) => `https://www.olx.pl/motoryzacja/budowlane/q-${dashQuery(q)}/${n > 1 ? `?page=${n}` : ""}`,
+        NATIONAL_MAX_PAGES,
+        [...NATIONAL_QUERIES, "doosan fx57", "fx57w", "bobkar"],
+      ),
   },
   {
     id: "autovit",

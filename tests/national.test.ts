@@ -1,7 +1,7 @@
 /** The national sites' card parsers, on real cards of 2026-11-07, and the pieces they rely on. */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { SOURCES, matchModel, seedUrls } from "../lib/config";
+import { SOURCES, classify, matchModel, seedUrls } from "../lib/config";
 import { findPrice, setEurRates, toEur } from "../lib/currency";
 import { priceChanged } from "../lib/history";
 import { afterBlock, isResting, parseRetryAfter, restMs } from "../lib/source-health";
@@ -23,6 +23,7 @@ import {
   parseLeboncoin,
   parseMaskinbladet,
   parseNettikone,
+  parseOlxPl,
   parseOtomoto,
   parseSubito,
 } from "../scraper/parsers";
@@ -196,6 +197,28 @@ describe("national site cards: mistakes seen on live pages", () => {
     assert.deepEqual([card?.year, card?.priceAmount, card?.location], [2008, 289000, "Bryne"]);
     const privat = parseFinn("Bilde 1 av 3 Doosan DX 60 9c 2024 350 000 kr Gratangen Privat ∙ 500 timer");
     assert.equal(privat?.location, "Gratangen");
+  });
+
+  it("OLX.pl", () => {
+    const card = parseOlxPl("Koparka Doosan FX57W. /Tosamo co bobkar E57 w 99 200 zł Miejska Górka - Odświeżono dnia 15 listopada 2026 2019");
+    assert.equal(card?.title, "Koparka Doosan FX57W. /Tosamo co bobkar E57 w");
+    assert.deepEqual([card?.year, card?.priceAmount, card?.priceCurrency, card?.location], [2019, 99200, "PLN", "Miejska Górka"]);
+    const negotiable = parseOlxPl("Koparka kołowa Doosan DX170, 9tys mth 230 000 zł do negocjacji Szczecin, Zdroje - Dzisiaj o 12:30 2015");
+    assert.deepEqual([negotiable?.location, negotiable?.hours, negotiable?.year], ["Szczecin, Zdroje", 9000, 2015]);
+    assert.equal(parseOlxPl("Doosan DX57W 60 000 zł Płock - 04 listopada 2026")?.year, null);
+    assert.equal(parseOlxPl("Doosan DX57W bez ceny"), null);
+    // refreshed today, and a seller's name behind the date
+    const today = parseOlxPl("koparka Jcb js 145lc 110 000 zł do negocjacji Kolno - Odświeżono dzisiaj o 03:32 2014");
+    assert.deepEqual([today?.location, today?.year], ["Kolno", 2014]);
+    assert.equal(parseOlxPl("Szybkozłącze do JCB 3 200 zł Nowe Świnoujście - Dzisiaj o 07:09 MiniTeamProject")?.location, "Nowe Świnoujście");
+  });
+
+  it("a Polish ad's FX57W is the Doosan DX57, and the E57W is a Bobcat even written 'bobkar'", () => {
+    assert.equal(matchModel("Koparka Doosan FX57W")?.key, "doosan-dx57");
+    assert.equal(classify("Krzyżaka wału napędowego Caterpillar 980G 980M 982M 986H", ["pl"]).model, null);
+    // Both names are the same machine; the Bobcat is listed first.
+    assert.equal(matchModel("Koparka Doosan FX57W. /Tosamo co bobkar E57 w")?.key, "bobcat-e57");
+    assert.equal(matchModel("Koparka bobkar E57 w kołowa")?.key, "bobcat-e57");
   });
 
   it("Nettikone's photo counters are no part of the title", () => {
